@@ -189,6 +189,39 @@ until measurement showed which calibrations were wrong.
    the baseline's totals; they also cleaned both systems' FP columns
    symmetrically.
 
+## Post-final experiments (day 2 — breadth, not the core result)
+
+These ran after v5 was frozen; they don't change the headline numbers,
+they stress-test whether it holds up outside the benchmark.
+
+**Cost ladder (`v5-fast`): cheaper reviewers are not worth it — measured.**
+We swapped the three reviewer agents to a ~4× cheaper small model,
+keeping v5's prompts, stages and verifier. Tier-3 result: F1 **0.850**
+(vs v5's 0.930) at **$0.57/case** (vs $0.73). Only ~22% cheaper for an
+8-point F1 drop — because the sonnet *verifier*, not the reviewers,
+dominates cost, and weaker reviewers simply find fewer real defects for
+it to confirm. Kept as a documented dial, not the default. Lesson: in a
+generate→verify pipeline, spend on the generator's recall; the verifier
+is already the expensive part.
+
+**Escaped-bug replay: external validity.** Three real MIT-licensed OSS
+commits that shipped real bugs past human review (TinyDB #445; a
+schedule refactor; schedule #517 — the last lived ~18 months in
+released code). Both the baseline and v5 caught all three. Two honest
+readings: (a) RevGuard finds real, not just planted, defects — the
+strongest external-validity evidence we have; (b) these are small diffs,
+so — exactly as benchmark finding #1 predicts — the baseline keeps pace;
+the pipeline's edge is large PRs. Full writeup: `replay/README.md`.
+
+**Dogfood on our own PR: the tool found real bugs in itself.** We opened
+a real PR adding a `--min-severity` flag (with one seeded crash) and ran
+`revguard.py --pr` on it. RevGuard flagged the seeded bug **and two real
+vulnerabilities we'd just written into the `--pr` feature** — argument
+injection through a hostile git ref name (which its verifier *reproduced*
+by constructing a malicious ref) and prompt injection through untrusted
+PR text. Both are now fixed on `main` (commit `ea2375c`). The tool
+improving its own next version is the workflow working end to end.
+
 ## Main failure mode & hot take
 
 **Main failure mode.** The final system's remaining misses are almost all
