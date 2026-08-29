@@ -6,28 +6,36 @@
       "file": "ledgerly/reports.py",
       "line": 44,
       "category": "correctness",
-      "title": "LEFT JOIN drops the month filter on expenses, inflating spent totals",
-      "description": "The rewritten query joins expenses to budgets only on user_id and category: `LEFT JOIN expenses e ON e.user_id = b.user_id AND e.category = b.category`. The original code computed spend via monthly_summary, which scoped expenses to the given month. The new query has no condition on e.spent_on (or any month-derived filter), so SUM(e.amount_cents) aggregates every expense ever recorded in that category for the user, not just the expenses in the requested month. This means 'spent', 'remaining', and 'over_budget' will be wrong for any user with expense history spanning more than one month \u2014 a significant behavior change despite the PR claiming 'No behavior change intended'.",
-      "severity": "critical"
+      "title": "Budget spent total no longer filtered by month",
+      "severity": "critical",
+      "description": "The new LEFT JOIN only matches `e.user_id = b.user_id AND e.category = b.category`; it never constrains expenses to the requested `month`/`spent_on` range the way the old `monthly_summary(db, user_id, month)` call did. As a result `spent` (and therefore `remaining` and `over_budget`) now aggregates ALL historical expenses in that category across every month, not just the target month. This is a behavior change (contrary to the PR description) that will silently report wildly inflated spend and incorrect over-budget flags for any user with expenses in prior months."
+    },
+    {
+      "file": "ledgerly/db.py",
+      "line": 100,
+      "category": "robustness",
+      "title": "CREATE INDEX statement lacks IF NOT EXISTS",
+      "severity": "critical",
+      "description": "SCHEMA is run via `executescript` every time a Database object is constructed (i.e., on every app/process start against an existing database file). All other schema objects appear to be idempotent (implied by repeated execution working today), but `CREATE INDEX idx_expenses_user_category ON expenses (...)` has no `IF NOT EXISTS` guard. On any restart against a database that has already run this schema once, the statement will raise `sqlite3.OperationalError: index idx_expenses_user_category already exists`, crashing initialization for every existing deployment."
     },
     {
       "file": "ledgerly/db.py",
       "line": 110,
       "category": "robustness",
-      "title": "PRAGMA synchronous = OFF risks database corruption, not just lost transactions",
-      "description": "Setting synchronous=OFF disables SQLite's fsync waits before continuing, meaning a power loss or OS crash can leave the database file in a corrupted state (not merely missing the most recent commits) under the default rollback-journal mode. This is applied globally to every connection/write in the service, not just the report path, and is a risky durability tradeoff for a financial/expense-tracking application. NORMAL (with WAL) or leaving the default FULL would be safer choices if write latency is a concern.",
-      "severity": "major"
+      "title": "synchronous=OFF risks database corruption",
+      "severity": "major",
+      "description": "Setting `PRAGMA synchronous = OFF` disables fsync calls at critical points; if the OS or application crashes (not just a power loss) between writes, SQLite makes no guarantee the database file won't become corrupted, not just lose recent transactions. For a financial ledger this is a serious durability/integrity regression. If faster writes are needed, `PRAGMA synchronous = NORMAL` combined with WAL mode is the safer standard trade-off; plain OFF is generally not recommended for any data users care about."
     },
     {
       "file": "ledgerly/reports.py",
-      "line": 40,
+      "line": 51,
       "category": "test-adequacy",
-      "title": "No test coverage added for the rewritten budget_status query",
-      "description": "The diff replaces a two-step aggregation with a single JOIN query but includes no new or updated tests. In particular, there is no test verifying that spend is scoped to the requested month, which would have caught the missing spent_on/month filter regression described above. Given this is a behavior-sensitive rewrite of a financial report, tests covering multi-month expense history and budgets with zero matching expenses (to confirm COALESCE/LEFT JOIN correctness) are needed.",
-      "severity": "major"
+      "title": "No test coverage for month-scoping regression",
+      "severity": "major",
+      "description": "The PR changes the SQL powering `budget_status` but includes no new/updated tests verifying that spend is still scoped to the requested month (e.g., a budget with expenses in both the target month and an adjacent month). Such a test would have caught the missing month filter in the LEFT JOIN before merge."
     }
   ],
-  "seconds": 46.3,
-  "cost_usd": 0.0602458,
+  "seconds": 39.4,
+  "cost_usd": 0.054368799999999995,
   "num_turns": 1
 }
