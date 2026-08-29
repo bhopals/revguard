@@ -1,0 +1,67 @@
+{
+  "case": "case01_csv_export",
+  "system": "agent-v5",
+  "findings": [
+    {
+      "file": "ledgerly/export.py",
+      "line": 18,
+      "category": "security",
+      "title": "SQL injection via category filter",
+      "severity": "critical",
+      "description": "The `category` parameter is interpolated directly into the SQL string with an f-string (`sql += f\" AND category = '{category}'\"`) instead of being passed as a bound parameter. Any caller-supplied category value containing a single quote or SQL metacharacters (e.g. `category=\"' OR '1'='1\"` or `category=\"x'; DROP TABLE expenses;--\"`) will be executed as part of the query, allowing data exfiltration across users (bypassing the `user_id = ?` scoping) or destructive SQL execution. The `user_id` parameter correctly uses a placeholder, showing the intended safe pattern was not applied to `category`.",
+      "reviewer": "security",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/export.py and confirmed the exact f-string interpolation `sql += f\" AND category = '{category}'\"` with no sanitization anywhere. db.py uses a real sqlite3 connection with no escaping layer. Executed a live reproduction: seeded two users (alice=1, bob=2) each with an expense row, then called export_expenses_csv(db, user_id=1, filename='out.csv', category=\"x' OR '1'='1\") as alice. The exported CSV contained BOTH alice's and bob's expense rows, proving the `user_id = ?` scoping was fully bypassed via classic boolean-based SQL injection \u2014 exactly the cross-user exfiltration the finding describes. (A stacked-query DROP TABLE payload was blocked only because sqlite3's execute() disallows multiple statements per call by default, but the primary exfiltration vector is fully live and exploitable.)",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "ledgerly/export.py",
+      "line": 12,
+      "category": "security",
+      "title": "Path traversal via caller-supplied filename",
+      "severity": "critical",
+      "description": "`filename` is joined into the export path with `os.path.join(EXPORT_DIR, filename)` without any validation or sanitization. If `filename` contains path traversal sequences (e.g. `../../etc/cron.d/evil`) or is an absolute path (e.g. `/etc/passwd`), `os.path.join` will resolve outside the intended `exports/` directory (an absolute path argument even overrides `EXPORT_DIR` entirely), allowing the caller to write the CSV file to an arbitrary location on the filesystem, potentially overwriting sensitive files.",
+      "reviewer": "security",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/export.py: line 12 does `path = os.path.join(EXPORT_DIR, filename)` with zero sanitization (no basename/secure_filename/validation anywhere in the file or repo per grep). Executed a live repro: calling export_expenses_csv(db, 1, '/tmp/pwned_evil_abs.csv') wrote directly to /tmp/pwned_evil_abs.csv (absolute path fully overrides EXPORT_DIR, per Python os.path.join semantics), and calling it with a correctly-depth-counted '../'*N + 'tmp/pwned_evil_rel.csv' traversal string escaped the exports/ directory and wrote to /tmp/pwned_evil_rel.csv as well. Both files were created outside the intended exports/ directory, confirming arbitrary-path file write is reachable through the documented public function signature.",
+        "adjusted_severity": "critical"
+      }
+    }
+  ],
+  "rejected_findings": [],
+  "raw_finding_count": 3,
+  "merged_count": 2,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 1,
+      "seconds": 92.9,
+      "cost_usd": 0.1479154
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 2,
+      "seconds": 22.8,
+      "cost_usd": 0.021174000000000002
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 0,
+      "seconds": 29.1,
+      "cost_usd": 0.058746200000000005
+    },
+    {
+      "stage": "verifier",
+      "in": 2,
+      "confirmed": 2,
+      "seconds": 47.5
+    }
+  ],
+  "seconds": 140.4,
+  "cost_usd": 0.374
+}

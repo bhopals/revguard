@@ -1,0 +1,58 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Roll unused budget into the next month</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Roll unused budget into the next month</h1>
+<div class="sub">Frequently requested feature: at month end, carry each category&#x27;s unspent budget into the next month. Adds a next_month helper and rollover_budgets(), plus a test.</div>
+<span class="verdict" style="background:#c62828">Request changes — 3 confirmed finding(s), 1 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. next_month does not roll over the year at December</strong>
+  <div class="loc">ledgerly/utils.py:51 &middot; correctness</div>
+  <div>next_month splits &#x27;YYYY-MM&#x27; and does f&quot;{y}-{int(m)+1:02d}&quot; without checking for month 12. Calling next_month(&#x27;2026-12&#x27;) produces &#x27;2026-13&#x27; instead of &#x27;2027-01&#x27;. Since rollover_budgets(db, user_id, &#x27;2026-12&#x27;) uses this as the target month for set_budget, the rolled-over budget is stored under the nonexistent month key &#x27;2026-13&#x27;. Any subsequent budget_status/monthly_summary call for the real next month &#x27;2027-01&#x27; will find no budget (WHERE month = ? does an exact string match), silently losing the carried-over budget for every year-end rollover.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/utils.py:51-54, confirmed next_month does int(m)+1 with no month-12 handling. Executed next_month(&#x27;2026-12&#x27;) -&gt; &#x27;2026-13&#x27;. Ran full end-to-end repro: set_budget for 2026-12, add_expense, rollover_budgets(db, user, &#x27;2026-12&#x27;) returns target=&#x27;2026-13&#x27;; budget_status(db, user, &#x27;2027-01&#x27;) returns [] (empty) despite the carried-over budget existing, while budget_status(db, user, &#x27;2026-13&#x27;) shows the budget. This confirms the carried-over budget is silently stored under a nonexistent month key and is unreachable via the real next month, exactly as described. No correction/safeguard exi</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>2. test_rollover asserts a tautology and cannot fail</strong>
+  <div class="loc">tests/test_ledgerly.py:108 &middot; test-adequacy</div>
+  <div>The only assertion in test_rollover is `assert len(status) &gt;= 0` (line 108). `len()` of a list can never be negative, so this assertion always passes regardless of what `rollover_budgets` and `budget_status` return — even if `rollover_budgets` raised no error but produced an empty or wrong list, or if `budget_status` returned garbage, the test would still pass. The test sets up a budget of 10000 cents with 4000 spent (expecting a rolled-over limit of 10000 + 6000 = 16000 for the target month), but never checks the category, limit, spent, or remaining values of `status[0]`, nor does it check the value of `target` (the month key returned by `rollover_budgets`/`next_month`). As written, this test would pass even if `rollover_budgets` did nothing to the budgets table, or if `next_month(&#x27;2026-03&#x27;)` returned an incorrect month key, providing no real regression protection for the new feature.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read tests/test_ledgerly.py:108, confirming the only assertion in test_rollover is `assert len(status) &gt;= 0`. Ran pytest -k test_rollover: passes. Then reproduced the test body with rollover_budgets replaced by a stub that does nothing to the budgets table and returns a garbage month key (&#x27;not-a-real-month&#x27;); budget_status on that key returned [] and `assert len(status) &gt;= 0` still passed. This proves the assertion is a true tautology (len() of a list is always &gt;= 0) that cannot detect a broken or no-op rollover_budgets, an incorrect next_month calculation, or wrong budget_status contents. (Al</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>3. rollover_budgets silently overwrites a budget already set for the target month</strong>
+  <div class="loc">ledgerly/reports.py:76 &middot; correctness</div>
+  <div>rollover_budgets computes a new_limit purely from from_month&#x27;s data and calls set_budget(db, user_id, category, target, new_limit), which performs an INSERT ... ON CONFLICT DO UPDATE. If the user (or another process) already explicitly set a budget for the target month/category (e.g. planned a higher April budget of $200 before March ends), running rollover_budgets for March will overwrite that April budget with the computed carry-over value, discarding the user&#x27;s explicit setting with no warning or merge logic. This is a real data-loss scenario whenever rollover is run after a future-month budget has already been configured.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/reports.py: set_budget performs INSERT ... ON CONFLICT (user_id,category,month) DO UPDATE SET limit_cents = excluded.limit_cents unconditionally, and rollover_budgets computes new_limit solely from from_month data then calls set_budget(db, user_id, category, target, new_limit) with no check of any pre-existing target-month budget. Reproduced with a live in-memory SQLite DB: set an explicit April &#x27;food&#x27; budget of $200 (20000 cents), then a March budget of $100 with $40 spent, then ran rollover_budgets(db, user_id, &#x27;2026-03&#x27;). Result: the April budget row was overwritten to 16000 c</div>
+</div>
+<footer>Pipeline: reviewer_correctness (2) &rarr; reviewer_security (0) &rarr; reviewer_tests (1) &rarr; verifier (3) &middot; 132.7s &middot;
+$0.54 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

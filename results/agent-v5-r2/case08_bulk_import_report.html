@@ -1,0 +1,51 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Bulk expense import</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Bulk expense import</h1>
+<div class="sub">Adds import_expenses() so users can migrate data from other apps. Takes a list of row dicts (as parsed from CSV/JSON uploads) and returns how many were imported, skipping rows that fail validation.</div>
+<span class="verdict" style="background:#e65100">Request changes — 2 confirmed finding(s), 0 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>1. amount_cents from import rows is never validated or converted, breaking the app&#x27;s integer-cents invariant</strong>
+  <div class="loc">ledgerly/expenses.py:75 &middot; correctness</div>
+  <div>import_expenses() forwards row[&quot;amount_cents&quot;] straight into add_expense() (ledgerly/expenses.py:18-28), which does zero validation on amount_cents — no type check, no positivity check. Unlike the rest of the app, which funnels user-entered amounts through utils.parse_money() (ledgerly/utils.py:13-28) to convert dollar strings into validated positive integer cents, import_expenses has no equivalent step. Since rows are described as &#x27;parsed from a CSV/JSON upload&#x27;, amount_cents will typically arrive as a string (e.g. &quot;12.50&quot; or &quot;$12.50&quot;) or could be negative/zero. Because the expenses.amount_cents column has INTEGER affinity but SQLite only converts text that is a losslessly-representable integer literal, a value like &quot;12.50&quot; is stored verbatim as TEXT. This corrupts ledgerly/reports.py:25&#x27;s `SUM(amount_cents)` monthly summary (non-numeric-looking cells are treated as 0, silently dropping the expense from totals) and violates the module docstring in ledgerly/utils.py:3 (&#x27;Money is always integer cents internally&#x27;). Negative or zero amounts are also accepted and imported even though the app&#x27;s own convention (parse_money) explicitly rejects amounts &lt;= 0, contradicting the import docstring&#x27;s promise that &#x27;Invalid rows are skipped&#x27;.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read expenses.py: import_expenses (lines 63-83) passes row[&#x27;amount_cents&#x27;] straight to add_expense, which (lines 18-28) only validates category, note length, and spent_on — never amount_cents, unlike parse_money (utils.py:13-28) used elsewhere which rejects non-numeric and &lt;=0 amounts. Reproduced end-to-end with sqlite3: imported rows with amount_cents=&#x27;12.50&#x27;, &#x27;$12.50&#x27;, -500, 0, and 1250 all succeeded (import_expenses returned count=5, none skipped) despite the docstring&#x27;s &#x27;Invalid rows are skipped&#x27; promise. Inspecting stored values confirmed type corruption: &#x27;12.50&#x27; is coerced by SQLite&#x27;s IN</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#8d6e63">MINOR</span>
+  <strong>2. Bare except Exception silently swallows non-validation errors with no distinction or reporting</strong>
+  <div class="loc">ledgerly/expenses.py:81 &middot; robustness</div>
+  <div>The except clause at lines 81-82 catches *any* exception raised while importing a row — not just ExpenseError from validation — and discards it with no logging. This means database-level failures (e.g. sqlite3.IntegrityError from a NOT NULL/foreign-key violation, sqlite3.OperationalError from a locked/corrupt DB, or an unexpected TypeError from malformed row data) are treated identically to a normal validation failure. A caller has no way to tell &#x27;the CSV had 5 malformed rows&#x27; apart from &#x27;the database connection failed mid-import and the remaining 995 rows were never attempted&#x27;, since both simply reduce the returned count with zero diagnostic information. This is a regression in error signaling compared to add_expense(), which normally raises ExpenseError with a specific reason for callers to handle or surface to the user.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/expenses.py lines 63-83: import_expenses wraps add_expense in `except Exception: pass` with no logging/reporting. Reproduced with python3: add_expense(db, 1, 300, &#x27;food&#x27;, &#x27;2024-01-01&#x27;, None) raises TypeError (len(None) on note check), and add_expense(db, 999, ...) with a non-existent user_id raises sqlite3.IntegrityError (FOREIGN KEY constraint failed) since db.py enables PRAGMA foreign_keys=ON. Running import_expenses with a mix of a valid row, an ExpenseError-triggering row (bad category), a TypeError-triggering row (note=None), and a real DB error all reduced to a single silen</div>
+</div>
+<footer>Pipeline: reviewer_correctness (3) &rarr; reviewer_security (0) &rarr; reviewer_tests (0) &rarr; verifier (2) &middot; 155.4s &middot;
+$0.43 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

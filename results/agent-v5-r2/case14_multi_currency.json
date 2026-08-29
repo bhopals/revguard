@@ -1,0 +1,67 @@
+{
+  "case": "case14_multi_currency",
+  "system": "agent-v5",
+  "findings": [
+    {
+      "file": "ledgerly/reports.py",
+      "line": 25,
+      "category": "correctness",
+      "severity": "major",
+      "title": "monthly_summary sums amounts across currencies as if they were the same currency",
+      "description": "add_expense now accepts a currency parameter (ledgerly/expenses.py:18) and stores it per-row, but monthly_summary's SQL still does `SUM(amount_cents) ... GROUP BY category` with no grouping or filtering by currency (reports.py:24-31). If a user records e.g. 350 USD and 350 EUR in 'food' during the same month, the query returns {'food': 700}, silently mixing currencies into one meaningless cents total. This propagates into budget_status (reports.py:34-57), which compares that mixed total against a budget limit and computes 'remaining'/'over_budget' as if all spend were in one currency \u2014 producing wrong budget alerts (e.g. falsely flagging over-budget, or masking a real overspend) as soon as any expense uses a non-USD currency. The PR description claims 'Reporting is unchanged', but the schema/behavior change it introduces breaks the previously-valid invariant that all amount_cents in a sum share a currency.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read reports.py: monthly_summary (lines 22-31) does SUM(amount_cents) GROUP BY category only, with no currency grouping/filter, despite expenses.py:18 now accepting a currency param stored per-row (db.py schema change). Reproduced with actual execution: added a 350 USD and a 350 EUR expense in category 'food' for the same month; monthly_summary returned {'food': 70000} (i.e. 700.00), conflating two different currencies into one meaningless total. Then set a $500 budget for 'food' and called budget_status, which returned over_budget: True with remaining: -$200.00 \u2014 a false over-budget alert, since the USD-only spend (350) was actually under the 500 budget. This confirms the exact failure mode described: incorrect cross-currency summation propagating into budget_status's remaining/over_budget computation. This is a concrete, reachable runtime defect in the PR's added behavior, not a test-coverage complaint.",
+        "adjusted_severity": "major"
+      }
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 18,
+      "category": "robustness",
+      "severity": "minor",
+      "title": "currency parameter is stored without any validation",
+      "description": "Unlike category, which is validated against VALID_CATEGORIES (expenses.py:19-20), the new currency argument is passed straight into the INSERT with no whitelist, format, or normalization check (expenses.py:24-29). Callers can pass an empty string, arbitrary text, mixed case ('usd' vs 'USD'), or overly long strings, all of which are persisted as-is. Because reporting/grouping logic elsewhere in the codebase (and any future currency-aware code) would rely on currency values being consistent codes, this lets inconsistent or garbage values into the expenses table with no error signaled to the caller, unlike every other validated field on this row.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/expenses.py: add_expense (line 18) validates category against VALID_CATEGORIES and note length, but the new currency parameter (added in this PR) is passed directly into the INSERT with no check at all. Reproduced with actual execution: inserting expenses with currency='', 'usd', 'not-a-currency', a 500-char string, and an emoji all succeeded and were persisted verbatim (confirmed via get_expense), while category validation correctly rejects invalid values elsewhere in the same function. This is an asymmetry in the actual production code path introduced by this PR, not a missing-test complaint \u2014 the PR's own test only exercises the happy path ('EUR' roundtrip) and never exercises invalid input.",
+        "adjusted_severity": "minor"
+      }
+    }
+  ],
+  "rejected_findings": [],
+  "raw_finding_count": 2,
+  "merged_count": 2,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 2,
+      "seconds": 46.3,
+      "cost_usd": 0.0962326
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 0,
+      "seconds": 26.3,
+      "cost_usd": 0.0630512
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 0,
+      "seconds": 44.5,
+      "cost_usd": 0.0846772
+    },
+    {
+      "stage": "verifier",
+      "in": 2,
+      "confirmed": 2,
+      "seconds": 39.3
+    }
+  ],
+  "seconds": 85.6,
+  "cost_usd": 0.3916
+}

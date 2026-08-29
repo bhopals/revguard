@@ -1,0 +1,97 @@
+{
+  "case": "case22_notifications_api",
+  "system": "agent-v5",
+  "findings": [
+    {
+      "file": "ledgerly/api.py",
+      "line": 146,
+      "category": "security",
+      "severity": "critical",
+      "title": "IDOR: GET /notifications lets any authenticated user read another user's notifications",
+      "description": "get_notifications() computes `uid = int(request.params.get(\"user_id\", request.user_id))`, trusting a client-supplied `user_id` query parameter over the authenticated `request.user_id`. Any logged-in user can call `GET /notifications?user_id=<victim>` to retrieve another user's full unread notification list (including over-budget alerts and digest bodies with spending details), bypassing authorization entirely. Every other authenticated handler in this file (e.g. get_expenses, get_summary, get_budgets) uses `request.user_id` directly with no client override, so this is a deviation introduced by the PR.",
+      "reviewer": "security",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/api.py:144-147 and confirmed `uid = int(request.params.get(\"user_id\", request.user_id))` trusts a client-supplied query param over the authenticated request.user_id, unlike every other authenticated handler in the file (get_expenses, get_summary, get_budgets, delete_expense all use request.user_id directly). Confirmed notify.unread(db, user_id) (ledgerly/notify.py:21-26) performs no ownership/authorization check, just a raw SELECT by user_id. Reproduced the exploit by executing api.handle(): registered users alice and bob, added a sensitive over_budget notification for alice, logged in as bob, then sent GET /notifications with a valid Bearer token for bob but query param user_id=<alice's id>. Result: HTTP 200 with alice's private notification body ('Alice secret: overspent on groceries by $500') returned to bob. This is a real, reachable, unauthenticated-authorization-bypass (IDOR) with no compensating control.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "ledgerly/api.py",
+      "line": 150,
+      "category": "security",
+      "severity": "critical",
+      "title": "Missing ownership check lets any user mark another user's notifications as read",
+      "description": "post_notification_read() runs `UPDATE notifications SET read_at = ? WHERE id = ?` using only the client-supplied notification_id, with no filter on request.user_id. Any authenticated user can pass an arbitrary/guessed notification_id (ids are small sequential integers) and mark any other user's notification as read, effectively dismissing/suppressing alerts (e.g. over-budget notices) they don't own. The codebase already has notify.mark_read(db, user_id, notification_id) (ledgerly/notify.py:29-34) which correctly scopes by `WHERE id = ? AND user_id = ?`, but the new API handler does not use it and instead issues its own unscoped SQL.",
+      "reviewer": "security",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/api.py: post_notification_read runs `UPDATE notifications SET read_at = ? WHERE id = ?` using only the client-supplied notification_id, with no user_id filter, while notify.mark_read(db, user_id, notification_id) in ledgerly/notify.py correctly scopes by `WHERE id = ? AND user_id = ?` but is never called from the API handler. Reproduced live via handle(): created a notification owned by alice (user 1), authenticated as bob (user 2), and POSTed /notifications/read with alice's notification_id. The request succeeded (200 {'ok': True}) and alice's unread list became empty \u2014 bob successfully suppressed alice's notification despite having no ownership of it. No test in tests/test_api.py exercises this route, so nothing caught it.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "ledgerly/notify.py",
+      "line": 93,
+      "category": "correctness",
+      "severity": "major",
+      "title": "send_weekly_digests marks the digest it just created as read",
+      "description": "In send_weekly_digests, notify(db, uid, \"digest\", body) inserts a new notification with read_at NULL (line 92), but the very next statement (lines 93-96) runs an unscoped UPDATE that sets read_at for every notification belonging to that user, with no WHERE read_at IS NULL or exclusion of the row just inserted. This means the digest notification is marked read in the same call that creates it, so it never shows up in notify.unread(db, uid) or the GET /notifications endpoint. The docstring promises to 'Queue a spending digest for every user' (implying the user can see/act on it) while also clearing old notifications, but as written the digest itself is immediately swallowed along with everything else, so users never actually see their weekly digest via the notification list. The included test masks this: `assert any(n[\"kind\"] == \"digest\" for n in unread(db, user)) or True` always passes regardless of the actual (broken) behavior.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/notify.py:82-98: send_weekly_digests inserts a digest notification then runs UPDATE notifications SET read_at = ? WHERE user_id = ? with no filter on read_at IS NULL or the newly inserted id, so it marks the just-created digest (and all other notifications) as read. Reproduced live: registered two users, called send_weekly_digests(db, '2026-03'), then notify.unread(db, user) and notify.unread(db, bob) both returned [] despite sent == 2, confirming digests are immediately swallowed and never reachable via GET /notifications. Ran the included test suite (pytest tests/test_notify.py -v) \u2014 all 8 tests pass including test_digest_queued_per_user, because its key assertion is `assert any(...) or True`, a tautology that always passes and cannot detect the bug. This is a genuine reachable correctness defect (affects the new GET /notifications endpoint added in api.py), not merely a missing-test complaint.",
+        "adjusted_severity": "major"
+      }
+    },
+    {
+      "file": "tests/test_notify.py",
+      "line": 50,
+      "category": "test-adequacy",
+      "title": "Tautological assertion via `or True` can never fail",
+      "severity": "major",
+      "description": "`assert any(n[\"kind\"] == \"digest\" for n in unread(db, user)) or True` is always true regardless of the left-hand expression, because of the trailing `or True`. This makes the assertion a no-op: it can never fail no matter what `send_weekly_digests` does. In fact the real behavior it should be checking is broken \u2014 `send_weekly_digests` (ledgerly/notify.py:82-98) inserts the digest notification via `notify()` and then immediately runs `UPDATE notifications SET read_at = ? WHERE user_id = ?` with no `read_at IS NULL` filter, which also marks the just-inserted digest as read. So `unread(db, user)` actually returns `[]` after the call, and the `any(...)` expression evaluates to `False` \u2014 a genuine regression from the docstring's promise (\"Queue a spending digest for every user\"). The `or True` masks this and lets the test pass despite the digest never appearing as unread.",
+      "reviewer": "tests",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/notify.py:82-98 and tests/test_notify.py:46-52, confirming the diff verbatim. Ran the test suite as-is (8 passed, including the tautological assertion). Then removed only the `or True` from line 50 and reran: TestDigestJob::test_digest_queued_per_user FAILED with `assert False` on `any(n[\"kind\"] == \"digest\" for n in unread(db, user))`, proving (1) the assertion is truly tautological/never-failing as originally written, and (2) send_weekly_digests genuinely has a real bug \u2014 its unscoped `UPDATE notifications SET read_at = ? WHERE user_id = ?` (missing `AND read_at IS NULL`) marks the just-inserted digest notification as read, so unread() returns [] immediately after the call, contradicting the docstring's promise to 'Queue a spending digest'. Restored original file; full suite still passes 8/8 with the flawed test in place.",
+        "adjusted_severity": "major"
+      }
+    }
+  ],
+  "rejected_findings": [],
+  "raw_finding_count": 5,
+  "merged_count": 4,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 1,
+      "seconds": 75.5,
+      "cost_usd": 0.1501826
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 2,
+      "seconds": 31.3,
+      "cost_usd": 0.061521200000000005
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 2,
+      "seconds": 38.9,
+      "cost_usd": 0.074409
+    },
+    {
+      "stage": "verifier",
+      "in": 4,
+      "confirmed": 4,
+      "seconds": 50.5
+    }
+  ],
+  "seconds": 126.0,
+  "cost_usd": 0.5667
+}

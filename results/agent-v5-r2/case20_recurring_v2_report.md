@@ -1,0 +1,29 @@
+# Code review: Recurring rules: biweekly cadence and pause/resume
+
+> Adds the two most requested recurring-rule features: a biweekly cadence (every second week on a weekday) and pause/resume so users can suspend a subscription rule while keeping its history. Tests included for both.
+
+**Verdict: request changes.** 3 blocking finding(s), 2 critical.
+
+## 1. [CRITICAL] Biweekly cadence fires every week, not every second week
+
+`ledgerly/recurring.py:106` — correctness
+
+The `biweekly` branch of `occurrences_between` (lines 106-111) is a verbatim copy of the `weekly` branch: it appends every date whose weekday matches `rule["weekday"]` within (start, end], with no logic to skip alternate weeks or any anchor date to establish week parity. For example, `occurrences_between({"cadence": "biweekly", "weekday": 0}, date(2026,3,2), date(2026,3,23))` returns `[2026-03-09, 2026-03-16, 2026-03-23]` — three consecutive Mondays — instead of alternating occurrences like `[2026-03-09, 2026-03-23]`. Since `materialize_due` calls this function to decide which expenses to create, a user's 'biweekly' subscription rule will be charged every week, doubling the intended amount. The included test (`test_biweekly_occurrence`) only checks an 8-day window containing a single matching weekday, so it cannot detect that alternate weeks aren't skipped, masking the bug.
+
+*Verified: Read ledgerly/recurring.py:100-112: the biweekly branch is identical logic to the weekly branch (only a comment differs), with no anchor date or week-parity check. Ran `occurrences_between({'cadence':'biweekly','weekday':0}, date(2026,3,2), date(2026,3,23))` and got `[2026-03-09, 2026-03-16, 2026-03-23]` — three consecutive Mondays, matching the finding exactly, instead of skipping alternate weeks. Also ran the included test_biweekly_occurrence, which passes because its 8-day window only contains one Monday and thus cannot distinguish weekly from biweekly cadence.*
+
+## 2. [CRITICAL] Biweekly test window too narrow to distinguish biweekly from weekly cadence
+
+`tests/test_recurring.py:69` — test-adequacy
+
+test_biweekly_occurrence checks occurrences_between with a 'biweekly' rule over the window date(2026,3,2) to date(2026,3,10) — only 8 days, containing exactly one Monday (2026-03-09). But the new 'biweekly' branch in recurring.py (lines 106-111) is functionally identical to the existing 'weekly' branch: it fires on every matching weekday in range with no every-other-week skipping logic (the only difference is a `# biweekly` comment on line 109). The sibling test TestOccurrences.test_weekly (test_recurring.py:36-40) uses the wider window date(2026,3,2) to date(2026,3,16) and asserts both 2026-03-09 and 2026-03-16 fire — proving that with a two-Monday window the current (non-biweekly) implementation would return both dates, which a correct biweekly rule should not do. Because test_biweekly_occurrence's window contains only a single occurrence of the target weekday, it cannot expose the missing skip-every-other-week logic: it passes identically whether the cadence branch actually implements biweekly semantics or just duplicates weekly filtering. The PR's headline feature (biweekly cadence) is therefore not actually verified by any test.
+
+*Verified: Read ledgerly/recurring.py:106-111: the 'biweekly' branch is logically identical to the 'weekly' branch (only a comment differs), with no every-other-week skip logic. Ran recurring.occurrences_between with a biweekly rule over a 6-week window (2026-03-02 to 2026-04-13): it fired on all 6 Mondays, identical to what a weekly rule would produce, proving the cadence is non-functional. The PR's test_biweekly_occurrence uses an 8-day window containing only one Monday, so it passes regardless of whether skip-logic exists; ran the full test suite (pytest tests/test_recurring.py) and all 12 tests pass despite the biweekly feature being completely broken.*
+
+## 3. [MAJOR] resume_rule backfills charges accrued during the pause window, contradicting its own docstring
+
+`ledgerly/recurring.py:64` — correctness
+
+`resume_rule`'s docstring promises 'charging resumes from now', implying occurrences during the paused period are not materialized. However, `pause_rule` and `resume_rule` only toggle the `active` flag and never touch `last_materialized` (lines 58-60, 66-68). `materialize_due` (lines 125-140) computes occurrences from `rule["last_materialized"]` (the last time it ran) to `today`, regardless of any pause in between. Concrete scenario: a monthly rule is materialized on 2026-03-06 (last_materialized='2026-03-06'), then paused for two months, then resumed, then `materialize_due` is called on 2026-06-06. Because `last_materialized` still holds the pre-pause date, `occurrences_between` returns the April 5 and May 5 occurrences that fell entirely within the paused window, and both get materialized as real expenses alongside the June 5 occurrence — i.e. the user is retroactively charged for the period they explicitly paused, directly contradicting the 'charging resumes from now' guarantee. The included test (`test_resume_reactivates`) never calls `materialize_due` before pausing, so `last_materialized` is still None when resumed, hitting the 'first run' fallback path and hiding this bug.
+
+*Verified: Read ledgerly/recurring.py: pause_rule/resume_rule (lines 55-68) only toggle the active flag and never touch last_materialized; materialize_due (115-141) computes occurrences from rule['last_materialized'] to today regardless of pause state. Reproduced the exact scenario from the finding with python3 -c: created a monthly rule, materialized on 2026-03-06 (last_materialized becomes '2026-03-06'), paused the rule, confirmed materialize_due during the pause creates 0 rows (active=0 filter), resumed the rule, then called materialize_due on 2026-06-06. Result: 3 new expenses created — spent_on 2026-04-05, 2026-05-05, and 2026-06-05 — i.e.*

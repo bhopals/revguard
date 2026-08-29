@@ -1,0 +1,67 @@
+{
+  "case": "case08_bulk_import",
+  "system": "agent-v5",
+  "findings": [
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 75,
+      "category": "correctness",
+      "title": "amount_cents from import rows is never validated or converted, breaking the app's integer-cents invariant",
+      "severity": "major",
+      "description": "import_expenses() forwards row[\"amount_cents\"] straight into add_expense() (ledgerly/expenses.py:18-28), which does zero validation on amount_cents \u2014 no type check, no positivity check. Unlike the rest of the app, which funnels user-entered amounts through utils.parse_money() (ledgerly/utils.py:13-28) to convert dollar strings into validated positive integer cents, import_expenses has no equivalent step. Since rows are described as 'parsed from a CSV/JSON upload', amount_cents will typically arrive as a string (e.g. \"12.50\" or \"$12.50\") or could be negative/zero. Because the expenses.amount_cents column has INTEGER affinity but SQLite only converts text that is a losslessly-representable integer literal, a value like \"12.50\" is stored verbatim as TEXT. This corrupts ledgerly/reports.py:25's `SUM(amount_cents)` monthly summary (non-numeric-looking cells are treated as 0, silently dropping the expense from totals) and violates the module docstring in ledgerly/utils.py:3 ('Money is always integer cents internally'). Negative or zero amounts are also accepted and imported even though the app's own convention (parse_money) explicitly rejects amounts <= 0, contradicting the import docstring's promise that 'Invalid rows are skipped'.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read expenses.py: import_expenses (lines 63-83) passes row['amount_cents'] straight to add_expense, which (lines 18-28) only validates category, note length, and spent_on \u2014 never amount_cents, unlike parse_money (utils.py:13-28) used elsewhere which rejects non-numeric and <=0 amounts. Reproduced end-to-end with sqlite3: imported rows with amount_cents='12.50', '$12.50', -500, 0, and 1250 all succeeded (import_expenses returned count=5, none skipped) despite the docstring's 'Invalid rows are skipped' promise. Inspecting stored values confirmed type corruption: '12.50' is coerced by SQLite's INTEGER-affinity rules to REAL 12.5 (not TEXT as the finding states, a minor inaccuracy) while '$12.50' truly stays TEXT; both break the integer-cents invariant. monthly_summary() (reports.py:22-31) then returned a corrupted total of 762.5 for the month instead of a correct integer, and the negative/zero rows were silently accepted into the ledger. This is live, reachable, incorrect runtime behavior in the new PR code, not a test-coverage complaint.",
+        "adjusted_severity": "major"
+      }
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 81,
+      "category": "robustness",
+      "title": "Bare except Exception silently swallows non-validation errors with no distinction or reporting",
+      "severity": "minor",
+      "description": "The except clause at lines 81-82 catches *any* exception raised while importing a row \u2014 not just ExpenseError from validation \u2014 and discards it with no logging. This means database-level failures (e.g. sqlite3.IntegrityError from a NOT NULL/foreign-key violation, sqlite3.OperationalError from a locked/corrupt DB, or an unexpected TypeError from malformed row data) are treated identically to a normal validation failure. A caller has no way to tell 'the CSV had 5 malformed rows' apart from 'the database connection failed mid-import and the remaining 995 rows were never attempted', since both simply reduce the returned count with zero diagnostic information. This is a regression in error signaling compared to add_expense(), which normally raises ExpenseError with a specific reason for callers to handle or surface to the user.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/expenses.py lines 63-83: import_expenses wraps add_expense in `except Exception: pass` with no logging/reporting. Reproduced with python3: add_expense(db, 1, 300, 'food', '2024-01-01', None) raises TypeError (len(None) on note check), and add_expense(db, 999, ...) with a non-existent user_id raises sqlite3.IntegrityError (FOREIGN KEY constraint failed) since db.py enables PRAGMA foreign_keys=ON. Running import_expenses with a mix of a valid row, an ExpenseError-triggering row (bad category), a TypeError-triggering row (note=None), and a real DB error all reduced to a single silently-skipped count with zero diagnostics -- e.g. import_expenses(db, 999, rows) returned 0 with no indication any DB-level failure occurred, identical in shape to a batch of purely invalid CSV rows. This confirms add_expense raises distinct exception types for distinct failure classes, while import_expenses collapses them all indistinguishably, exactly as described.",
+        "adjusted_severity": "minor"
+      }
+    }
+  ],
+  "rejected_findings": [],
+  "raw_finding_count": 3,
+  "merged_count": 2,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 3,
+      "seconds": 88.8,
+      "cost_usd": 0.13856480000000002
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 0,
+      "seconds": 23.4,
+      "cost_usd": 0.037448
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 0,
+      "seconds": 27.2,
+      "cost_usd": 0.06016540000000001
+    },
+    {
+      "stage": "verifier",
+      "in": 2,
+      "confirmed": 2,
+      "seconds": 66.6
+    }
+  ],
+  "seconds": 155.4,
+  "cost_usd": 0.4283
+}

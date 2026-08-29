@@ -1,0 +1,65 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: CSV export endpoint + household API</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: CSV export endpoint + household API</h1>
+<div class="sub">Adds GET /export (download expenses as CSV), and first household endpoints: GET /household/balances and POST /household/expenses. Also tidies the handler layer: field validation renamed to _require_fields and route registrations grouped by resource.</div>
+<span class="verdict" style="background:#c62828">Request changes — 4 confirmed finding(s), 1 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. Household balances endpoint missing membership authorization check</strong>
+  <div class="loc">ledgerly/api.py:156 &middot; security</div>
+  <div>get_household_balances (ledgerly/api.py:156-169) takes a household_id from query params and calls household.balances(db, hid) directly without ever verifying that request.user_id is a member of that household (contrast with post_household_expense at line 172, which correctly calls household.add_shared_expense -&gt; require_member). Any authenticated user can supply an arbitrary/guessed household_id (small sequential integers) and read the full list of member user_ids and their net financial balances for a household they do not belong to, leaking other users&#x27; financial data. This is an IDOR / broken object-level authorization vulnerability introduced by this PR.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/api.py:156-169 (get_household_balances) and ledgerly/household.py — neither calls require_member; household.balances() only checks members_of() to build the response, never checks the requesting user. Grepped for require_member usage across ledgerly/*.py: only used in remove_member and add_shared_expense, never in the balances path. Reproduced live: created household with alice (owner) and bob, added a $10 shared expense, then logged in as carol (a registered user with no membership in that household) and called GET /household/balances?household_id=&lt;hid&gt; with carol&#x27;s own valid be</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>2. Household expense amount parsed with float arithmetic instead of parse_money, causing off-by-one-cent errors</strong>
+  <div class="loc">ledgerly/api.py:176 &middot; correctness</div>
+  <div>post_household_expense converts the amount with `int(float(request.body[&quot;amount&quot;]) * 100)` instead of using the existing `parse_money` helper (used by post_expense and post_budget). Binary floating point cannot represent many decimal fractions exactly, so e.g. `float(&quot;9.99&quot;) * 100` evaluates to 998.9999999999999, and `int()` truncates it to 998 cents ($9.98) instead of 999 ($9.99). Money for shared/household expenses is silently short-changed by a cent for many common inputs (9.99, 19.99, 29.99, etc.), which then corrupts `household.balances()` totals and settlement calculations that assume exact integer cents.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/api.py:176, confirmed it uses `int(float(request.body[&quot;amount&quot;]) * 100)` instead of the `parse_money` helper used elsewhere. Verified via Python execution: while the reviewer&#x27;s specific cited example (float(&#x27;9.99&#x27;)*100 == 999.0, rounds correctly) was slightly inaccurate, a sweep of all cent values from 0.00 to 199.99 showed 1145/20000 values truncate incorrectly by exactly one cent (e.g. &#x27;0.29&#x27;-&gt;28, &#x27;19.99&#x27;-&gt;1998, &#x27;2.01&#x27;-&gt;200), whereas ledgerly.utils.parse_money correctly returns 29, 1999, 201 for the same inputs. Confirmed household.add_shared_expense stores amount_cents directl</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>3. CSV export does not escape/quote fields, corrupting rows when note contains a comma or newline</strong>
+  <div class="loc">ledgerly/api.py:200 &middot; correctness</div>
+  <div>get_export builds each CSV line via plain string interpolation `f&quot;{r[&#x27;spent_on&#x27;]},{r[&#x27;category&#x27;]},{amount},{r[&#x27;note&#x27;]}&quot;` with no quoting or escaping. `note` is free-form user text up to 500 characters (see expenses.add_expense/MAX_NOTE_LEN) with no character restrictions. If a note contains a comma (e.g. &quot;coffee, lunch&quot;), the resulting line has five comma-separated fields instead of four, shifting/breaking any downstream CSV parser&#x27;s column alignment. If a note contains a newline, the note content is split across CSV lines, producing a bogus extra row that doesn&#x27;t match the declared `spent_on,category,amount,note` header schema. This breaks the endpoint&#x27;s documented purpose of producing valid CSV output for arbitrary user expenses.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/api.py:187-202 (get_export) and ledgerly/expenses.py (add_expense/MAX_NOTE_LEN=500, no character restriction). Reproduced with executable script: registered a user, added an expense with note=&#x27;coffee, lunch&#x27;, called GET /export, and parsed the resulting body with Python&#x27;s csv module — header row has 4 fields but the data row parses into 5 fields ([&#x27;2026-03-01&#x27;,&#x27;food&#x27;,&#x27;12.50&#x27;,&#x27;coffee&#x27;,&#x27; lunch&#x27;]), confirming column misalignment. Also added an expense with note=&#x27;line1\nline2&#x27; and confirmed the exported body splits into 3 lines instead of 2 (a bogus extra row). Ran full test suite (5</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#8d6e63">MINOR</span>
+  <strong>4. Household-expense test uses only a round dollar amount, hiding the float-conversion bug in the new handler</strong>
+  <div class="loc">tests/test_api.py:93 &middot; test-adequacy</div>
+  <div>post_household_expense (ledgerly/api.py:176) converts the amount with `int(float(request.body[&quot;amount&quot;]) * 100)` instead of the existing `parse_money` helper used elsewhere. This raw float multiplication is prone to precision loss for many two-decimal amounts (e.g. `float(&quot;19.99&quot;) * 100 == 1998.9999999999998`, so `int(...)` truncates to 1998 instead of 1999). test_balances_for_own_household only ever exercises amount &quot;10.00&quot;, a value with an exact binary float representation, so the resulting net_cents (500/-500) can never reveal the truncation bug. A test using a value like &quot;19.99&quot; or &quot;0.29&quot; would fail against the current implementation, but the chosen input silently passes regardless of whether the conversion is correct.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Reproduced directly: python3 -c confirms float(&#x27;19.99&#x27;)*100 == 1998.9999999999998, so int(...) truncates to 1998 instead of 1999 cents, while float(&#x27;10.00&#x27;)*100 == 1000.0 exactly. Confirmed ledgerly/utils.py&#x27;s parse_money uses correct string-based parsing (splits on decimal, no float multiplication) and is used everywhere else (post_expense, post_budget), but post_household_expense in api.py:176 bypasses it with raw `int(float(request.body[&quot;amount&quot;]) * 100)`. Empirically modified the test to use amount &quot;19.99&quot; with expected net_cents 1999/-1999 and reran pytest: it failed with actual net_cents</div>
+</div>
+<footer>Pipeline: reviewer_correctness (3) &rarr; reviewer_security (2) &rarr; reviewer_tests (1) &rarr; verifier (4) &middot; 159.1s &middot;
+$0.74 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>
