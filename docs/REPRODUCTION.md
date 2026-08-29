@@ -33,10 +33,11 @@ cd revguard
 make validate            # ~1 min, no API calls
 
 # 2. Baseline: one direct prompt per case, diff pasted inline, no tools.
-make baseline            # ~4 min, 16 API calls
+make baseline            # ~15 min, 22 API calls
 
-# 3. Final agent pipeline (v3): parallel specialists + adversarial verifier.
-make agent               # ~30-45 min
+# 3. Final agent pipeline (v5): recall-tuned parallel specialists +
+#    policy-gated adversarial verifier.
+make agent               # ~45-60 min, ~$11 total
 
 # 4. Score everything present under results/ with the fixed matching rule.
 make eval
@@ -51,9 +52,24 @@ systems should hold.
 To reproduce the intermediate changelog iterations:
 
 ```bash
-python3 agent/run.py --config v1   # single tooled reviewer
+python3 agent/run.py --config v1   # single tooled reviewer, conservative
 python3 agent/run.py --config v2   # parallel specialists, no verifier
+python3 agent/run.py --config v3   # + truth-only verifier (the rubber stamp)
 python3 agent/run.py --config v4   # the removed experiment (adds nitpick reviewer)
+```
+
+Repeat runs for variance use fresh result dirs:
+
+```bash
+python3 baseline/run.py --out results/baseline-r2 --traj trajectories/baseline-r2
+python3 agent/run.py --config v5 --run-name agent-v5-r2
+```
+
+To review a real repository with the final pipeline (the tool itself):
+
+```bash
+python3 revguard.py --repo /path/to/repo --base main            # working tree
+python3 revguard.py --repo /path/to/repo --base main --head br  # a branch
 ```
 
 Every run writes:
