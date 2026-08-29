@@ -21,9 +21,29 @@ class AgentError(Exception):
 
 
 def run_agent(prompt, *, system_prompt=None, cwd=None, allowed_tools=(),
-              model=None, trajectory_path=None, timeout=900):
+              model=None, trajectory_path=None, timeout=900, retries=2):
     """Run one headless Claude Code agent. Returns a dict with
-    text (final response), cost_usd, seconds, num_turns."""
+    text (final response), cost_usd, seconds, num_turns.
+
+    Transient failures (rate limits, network) are retried with backoff so
+    a long unattended sweep survives blips."""
+    last_err = None
+    for attempt in range(retries + 1):
+        try:
+            return _run_agent_once(
+                prompt, system_prompt=system_prompt, cwd=cwd,
+                allowed_tools=allowed_tools, model=model,
+                trajectory_path=trajectory_path, timeout=timeout,
+            )
+        except (AgentError, subprocess.TimeoutExpired) as e:
+            last_err = e
+            if attempt < retries:
+                time.sleep(20 * (attempt + 1))
+    raise AgentError(f"failed after {retries + 1} attempts: {last_err}")
+
+
+def _run_agent_once(prompt, *, system_prompt=None, cwd=None, allowed_tools=(),
+                    model=None, trajectory_path=None, timeout=900):
     cmd = [
         "claude", "-p", prompt,
         "--output-format", "stream-json", "--verbose",

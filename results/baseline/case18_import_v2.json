@@ -1,0 +1,57 @@
+{
+  "case": "case18_import_v2",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/importers.py",
+      "line": 82,
+      "category": "correctness",
+      "severity": "major",
+      "title": "Prefix matching not actually case-insensitive for map keys",
+      "description": "category_for() calls desc.upper().startswith(prefix) but never uppercases `prefix` itself. The docstring and PR description promise 'case-insensitive prefix rules', but if a caller supplies a mapping with a lowercase or mixed-case key (e.g. {'coffee': 'food'}), it will never match an uppercase description like 'COFFEE SHOP' because 'COFFEE SHOP'.startswith('coffee') is False. Only mappings whose keys happen to already be uppercase work, silently breaking the advertised guarantee for any other casing."
+    },
+    {
+      "file": "ledgerly/importers.py",
+      "line": 93,
+      "category": "correctness",
+      "severity": "major",
+      "title": "Duplicate detection keyed only on (date, amount) causes false positives",
+      "description": "_is_duplicate() dropped the note/description from its WHERE clause, so two genuinely distinct transactions sharing the same date and amount (e.g. two separate $12.50 purchases on the same day at different merchants) are now indistinguishable and the second legitimate expense will be silently skipped as a 'duplicate' and never imported. This is a data-loss regression relative to the previous (date, amount, description) key, and is not just a performance simplification as the PR description implies."
+    },
+    {
+      "file": "ledgerly/importers.py",
+      "line": 112,
+      "category": "correctness",
+      "severity": "critical",
+      "title": "Batch may not actually be atomic if add_expense doesn't share the transaction",
+      "description": "The code was careful to switch the closing INSERT to db.conn.execute(...) instead of db.execute(...), implying db.execute() has its own commit/transaction semantics that don't compose with `with db.transaction():`. However, add_expense() (imported unchanged from .expenses) is still called as before and presumably uses db.execute() internally. If so, every expense row is committed immediately as it's added, and only the final import_batches insert is actually protected by the transaction/rollback. A later row failing (e.g. an unknown category raised by category_for) would leave previously-processed rows permanently committed, directly contradicting the PR's headline claim that 'a bad row no longer leaves a half-imported statement' and the docstring's 'no expense from this statement is recorded' guarantee."
+    },
+    {
+      "file": "ledgerly/importers.py",
+      "line": 84,
+      "category": "robustness",
+      "severity": "minor",
+      "title": "Invalid category_map entries are validated lazily, not upfront",
+      "description": "category_for() only raises for a mapping's target category when a row's description actually matches that prefix. A category_map containing a bad entry (e.g. {'PARKING': 'yachts'}) for a prefix that doesn't appear in the current statement will pass silently with no error, deferring the failure to whatever future statement first contains a matching description. Validating the whole category_map once before processing rows would surface configuration mistakes immediately instead of intermittently."
+    },
+    {
+      "file": "tests/test_importers.py",
+      "line": 63,
+      "category": "test-adequacy",
+      "severity": "major",
+      "title": "No test verifies rollback actually undoes prior inserts on failure",
+      "description": "test_mapping_to_unknown_category only asserts that ImportError_ is raised; it never checks the database state afterward. Given the suspected non-atomicity of add_expense() calls inside db.transaction() (see importers.py:112), this test would pass even if earlier rows in the same statement were already permanently committed before the failing row was hit \u2014 the exact regression the PR claims to fix. A real atomicity test should craft a statement where a later row fails and then assert zero expenses (and no import_batches row) exist afterward."
+    },
+    {
+      "file": "tests/test_importers.py",
+      "line": 68,
+      "category": "test-adequacy",
+      "severity": "minor",
+      "title": "No test for the changed duplicate-detection key",
+      "description": "There is no test covering two rows with the same date and amount but different descriptions, which is exactly the behavior _is_duplicate() changed. Without such a test, the false-positive-skip regression described above would go undetected by the test suite."
+    }
+  ],
+  "seconds": 123.7,
+  "cost_usd": 0.1516268,
+  "num_turns": 1
+}

@@ -1,0 +1,50 @@
+{
+  "case": "case10_note_search",
+  "system": "agent-v3",
+  "findings": [
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 68,
+      "category": "security",
+      "severity": "critical",
+      "title": "SQL injection via unvalidated `sort` column name",
+      "description": "`sort` is f-string interpolated directly into the SQL ORDER BY clause with no allow-list check or quoting: `f\" ORDER BY {sort} DESC\"`. Any caller (e.g. an API endpoint exposing a `sort`/`sort_by` query param) that passes user-controlled text through to `search_expenses` enables SQL injection. Since SQLite (and the `db.query` wrapper used elsewhere in this file) does not support stacked queries via parameter binding, an attacker is still able to perform boolean/UNION-based injection through ORDER BY, e.g. `sort=\"(SELECT CASE WHEN (SELECT password FROM users WHERE id=1) LIKE 'a%' THEN spent_on ELSE id END)\"` or `sort=\"id) UNION SELECT ... --\"` depending on how the surrounding query is structured, allowing extraction of data from other tables/users. Every other query in this module (get_expense, delete_expense, list_expenses) uses bound parameters for all user-influenced values; this function breaks that pattern for the one column that is string-interpolated. Fix by validating `sort` against an explicit allow-list of known column names (e.g. `{'spent_on', 'amount_cents', 'category', 'id'}`) before interpolating it.",
+      "reviewer": "security",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/expenses.py: search_expenses builds `sql += f\" ORDER BY {sort} DESC\"` with `sort` f-string interpolated and never validated against an allow-list (confirmed via grep that no other reference to `sort` exists anywhere in the repo). Wrote and ran a live exploit against the actual Database/search_expenses code: inserted a `users` row with password_hash='SECRETHASH', then called search_expenses(db, uid, '', sort=\"(CASE WHEN (SELECT password_hash FROM users WHERE username='victim') LIKE '<guess>%' THEN amount_cents ELSE -amount_cents END)\"). With the correct prefix 'S' the results ordered descending ([300,200,100]); with an incorrect prefix 'X' the order flipped to ascending ([100,200,300]). This is a fully working boolean-oracle SQL injection that extracts data (password hashes) from an unrelated table via the unsanitized sort parameter, exactly as described. Also verified stacked-statement injection (`; DROP TABLE ...`) is blocked by the sqlite3 driver, matching the finding's own caveat that only single-statement boolean/UNION-style injection is viable \u2014 which was demonstrated to work.",
+        "adjusted_severity": "critical"
+      }
+    }
+  ],
+  "raw_finding_count": 3,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 1,
+      "seconds": 41.6,
+      "cost_usd": 0.07458220000000002
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 1,
+      "seconds": 21.3,
+      "cost_usd": 0.039815199999999995
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 1,
+      "seconds": 23.1,
+      "cost_usd": 0.0500992
+    },
+    {
+      "stage": "verifier",
+      "in": 1,
+      "confirmed": 1,
+      "seconds": 68.7
+    }
+  ],
+  "seconds": 110.3,
+  "cost_usd": 0.3045
+}

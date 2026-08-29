@@ -1,0 +1,65 @@
+{
+  "case": "case11_budget_rollover",
+  "system": "agent-v3",
+  "findings": [
+    {
+      "file": "ledgerly/utils.py",
+      "line": 51,
+      "category": "correctness",
+      "title": "next_month does not roll over the year for December",
+      "severity": "critical",
+      "description": "next_month splits 'YYYY-MM' and computes int(m) + 1 without handling m == 12: next_month('2026-12') returns '2026-13' instead of '2027-01'. rollover_budgets (ledgerly/reports.py:65) uses this as the target month passed to set_budget, so rolling over a December budget silently creates a budget row for the nonexistent month '2026-13'. That row will never match monthly_summary or budget_status queries for the real next month (which filter on 'substr(spent_on,1,7) = ?' or 'month = ?' with a correctly formatted key), so the carried-over budget becomes permanently invisible/unusable \u2014 the rollover feature silently fails for every year boundary.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Ran `python3 -c \"from ledgerly.utils import next_month; print(next_month('2026-12'))\"` which printed '2026-13' instead of '2027-01', confirming no year-rollover handling for month=12. Verified via grep that reports.py budget_status/monthly_summary filter with exact string equality ('month = ?' and 'substr(spent_on,1,7) = ?'), so a budget row stored under '2026-13' would never be matched by real-January queries, making the rolled-over budget invisible.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "tests/test_ledgerly.py",
+      "line": 108,
+      "category": "test-adequacy",
+      "severity": "major",
+      "title": "test_rollover assertion is a tautology that can never fail",
+      "description": "`assert len(status) >= 0` is always true since `len()` never returns a negative number. This test exercises `rollover_budgets` and `next_month` but verifies nothing about their behavior: it does not check that `target` equals \"2026-04\", that a budget row was actually created in the target month, or that the rolled-over limit equals the expected 10000 + (10000-4000) = 16000 cents (\"$160.00\"). A completely broken implementation of `rollover_budgets` (e.g. one that writes to the wrong month, computes the wrong carry amount, or silently no-ops) would still pass this test. The PR's core new behavior \u2014 correct carry-over math and correct target-month computation \u2014 ships with no real test coverage.",
+      "reviewer": "tests",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read tests/test_ledgerly.py:108 confirming the sole assertion is `assert len(status) >= 0`. Ran the test as-is (passed), then patched ledgerly/reports.py so rollover_budgets never calls set_budget (a no-op stub) and reran `pytest -k test_rollover` \u2014 it still passed. This proves the test provides no coverage of the new rollover math/target-month behavior; a completely broken implementation passes undetected. Restored the original file afterward.",
+        "adjusted_severity": "major"
+      }
+    }
+  ],
+  "raw_finding_count": 2,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 1,
+      "seconds": 28.9,
+      "cost_usd": 0.060646
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 0,
+      "seconds": 22.2,
+      "cost_usd": 0.0506598
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 1,
+      "seconds": 32.0,
+      "cost_usd": 0.08266559999999999
+    },
+    {
+      "stage": "verifier",
+      "in": 2,
+      "confirmed": 2,
+      "seconds": 25.7
+    }
+  ],
+  "seconds": 57.7,
+  "cost_usd": 0.2755
+}

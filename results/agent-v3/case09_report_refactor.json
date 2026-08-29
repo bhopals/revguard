@@ -1,0 +1,28 @@
+{
+  "case": "case09_report_refactor",
+  "system": "agent-v3",
+  "findings": [],
+  "raw_finding_count": 0,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 0,
+      "seconds": 12.2,
+      "cost_usd": 0.029235200000000003
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 0,
+      "seconds": 12.3,
+      "cost_usd": 0.0288218
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 0,
+      "seconds": 39.3,
+      "cost_usd": 0.11166540000000001
+    }
+  ],
+  "seconds": 39.3,
+  "cost_usd": 0.1697
+}

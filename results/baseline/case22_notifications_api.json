@@ -1,0 +1,49 @@
+{
+  "case": "case22_notifications_api",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/api.py",
+      "line": 146,
+      "category": "security",
+      "title": "IDOR: user can read another user's notifications",
+      "severity": "critical",
+      "description": "get_notifications() takes the target user id from the request query params (`request.params.get(\"user_id\", request.user_id)`) instead of always using the authenticated caller's id. Any authenticated user can pass a different `user_id` and read another user's notifications, which is an insecure direct object reference / broken access control vulnerability."
+    },
+    {
+      "file": "ledgerly/api.py",
+      "line": 154,
+      "category": "security",
+      "title": "IDOR: any user can mark any other user's notification as read",
+      "severity": "critical",
+      "description": "post_notification_read() updates `notifications` by `id` alone, with no WHERE clause tying the row to `request.user_id`. Any authenticated caller can supply an arbitrary notification_id and mark (or tamper with the read state of) any other user's notifications."
+    },
+    {
+      "file": "ledgerly/notify.py",
+      "line": 94,
+      "category": "correctness",
+      "title": "Weekly digest is marked read immediately after being sent",
+      "severity": "critical",
+      "description": "After notify() inserts the new 'digest' notification for the user (line 92), send_weekly_digests() immediately runs `UPDATE notifications SET read_at = ? WHERE user_id = ?` with no filter excluding the just-created row. This sets read_at on the digest notification itself, so the user's inbox never actually contains an unread digest \u2014 the feature silently sends digests that are already 'read', defeating the purpose of the notification."
+    },
+    {
+      "file": "ledgerly/api.py",
+      "line": 152,
+      "category": "robustness",
+      "title": "Unvalidated notification_id can raise unhandled exception",
+      "severity": "minor",
+      "description": "`int(request.body[\"notification_id\"])` is not guarded; a non-numeric value in the request body will raise a ValueError that propagates as an unhandled server error (500) instead of a controlled 4xx response."
+    },
+    {
+      "file": "tests/test_notify.py",
+      "line": 50,
+      "category": "test-adequacy",
+      "title": "Tautological assertion never fails",
+      "severity": "major",
+      "description": "`assert any(n[\"kind\"] == \"digest\" for n in unread(db, user)) or True` always evaluates to True regardless of the `any(...)` result because of `or True`, so this assertion can never fail and provides no actual verification. Combined with the read-marking bug in send_weekly_digests, this test suite does not catch that the digest notification ends up already marked read and thus invisible in the unread list."
+    }
+  ],
+  "seconds": 91.5,
+  "cost_usd": 0.1096798,
+  "num_turns": 1
+}
