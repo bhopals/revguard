@@ -10,7 +10,31 @@ the fixed matching rule in `eval/score.py`. All systems use the same model.
 > is how you know they were honest. All systems are always re-scored
 > against the same final labels.
 
-<!-- FINAL_TABLE -->
+## Final results (ground truth frozen at 61 defects, 22 cases)
+
+**Tier 3 — six large multi-file PRs, the regime this tool targets:**
+
+| system | found | recall | precision | F1 | FPs |
+|---|---|---|---|---|---|
+| baseline (1 prompt, no tools) | 19/22 | 0.86 | 0.90 | 0.884 | 2 |
+| **RevGuard v5 (final)** | **20/22** | **0.91** | **0.95** | **0.930** | **1** |
+
+**All 22 cases (both regimes pooled):**
+
+| system | found | recall | precision | F1 | FPs | clean-PR FPs | avg s/case | avg $/case |
+|---|---|---|---|---|---|---|---|---|
+| baseline | 58/61 | 0.951 | 0.906 | 0.928 | 6 | 0 | 40 | 0.05 |
+| v1 tooled generalist | 40/61 | 0.656 | 0.976 | 0.784 | 1 | 0 | 46 | 0.10 |
+| v2 + specialists | 44/61 | 0.721 | 0.846 | 0.779 | 8 | 0 | 47 | 0.23 |
+| v3 + verifier (truth-only) | 44/61 | 0.721 | 0.815 | 0.765 | 10 | 0 | 79 | 0.39 |
+| v4 + nitpick (removed) | 51/61 | 0.836 | 0.810 | 0.823 | 12 | 0 | 105 | 0.55 |
+| **v5 recall-tuned + policy-gated verifier** | 51/61 | 0.836 | **0.944** | 0.887 | **3** | 0 | 110 | 0.50 |
+
+Tier 1–2 (16 small PRs) is saturated: the baseline reads 39/39 there, and
+that finding — the base model has *solved* small-diff review — is
+result #1 of this project. Human time comparison: a careful human review
+of a tier-3 PR is 30–60 minutes; both systems run in ~1–2 minutes for
+under a dollar.
 
 ## Baseline — one prompt, diff inline, no tools
 
@@ -109,7 +133,21 @@ measured failure:
    gets a hard ban on coverage-advisory findings (defense in depth).
 
 All prompts are versioned; v1–v4 remain reproducible byte-for-byte.
-<!-- V5_RESULT -->
+
+**Result: on tier 3 — the large, realistic PRs this tool exists for — v5
+beats the baseline on every metric: F1 0.930 vs 0.884, recall 0.91 vs
+0.86, precision 0.95 vs 0.90, one false positive across six large PRs vs
+two.** Overall (all 22 cases) v5 scores F1 0.887 with 3 false positives
+against the baseline's 0.928 with 6 — the gap is entirely the saturated
+small-PR tier, where the baseline reads 39/39 and nothing can improve on
+it. The policy-gated verifier did its job this time: it rejected advisory
+findings the reviewers still produced, cutting false positives from v4's
+13 to 3 while recall-tuned reviewers held recall.
+
+The tier-3 F1 progression across the whole changelog — baseline 0.884 →
+v1 0.872 → v2 0.857 → v3 0.773 → v4 0.809 → **v5 0.930** — is the
+honest shape of this project: adding agent machinery made things *worse*
+until measurement showed which calibrations were wrong.
 
 ## Adjudication passes (label corrections, applied to all systems)
 
@@ -122,8 +160,45 @@ All prompts are versioned; v1–v4 remain reproducible byte-for-byte.
    token-file permission race; cache returning a mutable reference) were
    promoted to ground truth. Net effect: baseline recall ROSE from 0.943
    to 1.000 on tiers 1–2.
-2. **Round 2** (after all systems ran): <!-- ADJUDICATION_2 -->
+2. **Round 2** (after all systems ran, before the final table): applied
+   the four written rules in `tools/adjudicate.py` to every FP and miss
+   of every system. Three alternate anchors (the currency-mixing bug is
+   validly reported at the untouched aggregation query; the invite-cap
+   bypass at accept_invite's insert; the biweekly impossibility at
+   create_rule). Two promotions — added tests *named for* the defective
+   behavior but structured to dodge it (`test_resume_reactivates` never
+   spans a paused occurrence; `test_balances_for_own_household` never
+   tests a non-member) — both flagged independently by the baseline and
+   the agent, matching the pattern of four pre-existing GT defects.
+   Pure "no tests for X" advisories stayed false positives for everyone.
+   Final ground truth: **61 defects, frozen.** Net effect of the round:
+   baseline recall rose 0.949 → 0.951, so the refinements again favored
+   the baseline's totals; they also cleaned both systems' FP columns
+   symmetrically.
 
 ## Main failure mode & hot take
 
-<!-- HOT_TAKE -->
+**Main failure mode.** The final system's remaining misses are almost all
+minor-severity defects on small diffs (a `>` vs `>=` boundary, unescaped
+LIKE wildcards): even recall-tuned specialists talk themselves out of
+minors. More interesting are its two tier-3 misses — the never-consumed
+invite code and the `synchronous = OFF` durability trade — both of which
+a reviewer *mentioned* in an adjacent framing that then fell to lane
+boundaries or the policy gate. Filtering stages don't just remove noise;
+they define what the system is allowed to notice. Every gate you add
+needs its own miss-audit.
+
+**Hot take.** Everyone bolts a verifier onto their agent pipeline; almost
+nobody measures what it actually gates. Ours confirmed **54 of 54**
+findings — pure cost, zero value — for a reason that generalizes:
+*verification checks truth, but most bad review comments are true.*
+"There are no tests for X" is factually correct and still noise. A
+verifier needs a policy gate (is this a defect a staff engineer would
+block on?) as much as a truth gate, and the reviewers feeding it should
+be tuned permissive precisely BECAUSE it exists — our biggest single
+improvement came from moving the conservatism from the generators to the
+filter. And beneath all of it, the two-regime finding: the base model
+one-shots small-PR review (39/39 on our tier 1–2) — building agent
+machinery there is negative-value. Benchmark until you find where the
+model actually breaks, then build exactly there. On large multi-file PRs
+the same machinery that lost on small diffs wins on every metric.

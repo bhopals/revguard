@@ -1,0 +1,30 @@
+{
+  "case": "case14_multi_currency",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 18,
+      "category": "robustness",
+      "title": "Currency parameter is not validated or normalized",
+      "description": "add_expense accepts any string for currency with no check against a known set of ISO codes and no case normalization. Callers can pass an empty string, garbage text, or lowercase codes (e.g. 'eur' vs 'USD'), which will be stored verbatim. This produces inconsistent currency values in the database and, combined with unnormalized case, means the same currency can be represented multiple ways, breaking any downstream grouping/reporting by currency."
+    },
+    {
+      "file": "ledgerly/db.py",
+      "line": 22,
+      "category": "correctness",
+      "title": "Reporting sums amount_cents across mixed currencies",
+      "description": "The PR explicitly states 'Reporting is unchanged,' but reporting logic sums/aggregates amount_cents assuming a single currency (USD). Now that expenses can be recorded in arbitrary currencies, any existing report that totals amount_cents will silently add together amounts in different currencies (e.g. 100 USD + 100 EUR = 200) as if they were equivalent, producing incorrect totals without any error or warning. This is a significant correctness regression introduced by allowing multi-currency data while leaving aggregation logic untouched."
+    },
+    {
+      "file": "tests/test_ledgerly.py",
+      "line": 82,
+      "category": "test-adequacy",
+      "title": "Missing tests for invalid currency and reporting interaction",
+      "description": "The only new test verifies a simple currency roundtrip. There is no test covering invalid/malformed currency values (empty string, unknown code, wrong case), no test confirming the default 'USD' is applied when currency is omitted and retrievable, and critically no test demonstrating how existing reporting/aggregation behaves when expenses have mixed currencies \u2014 which is exactly the scenario likely to produce incorrect totals given the unchanged reporting code."
+    }
+  ],
+  "seconds": 40.4,
+  "cost_usd": 0.0514758,
+  "num_turns": 1
+}

@@ -1,0 +1,41 @@
+{
+  "case": "case16_top_categories",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/reports.py",
+      "line": 62,
+      "category": "correctness",
+      "title": "Sorting by formatted string instead of numeric amount",
+      "severity": "critical",
+      "description": "The sort key is format_money(kv[1]), which formats cents into a display string (e.g. '$9.99'). Sorting these strings lexicographically does not produce a numeric ordering (e.g. '$100.00' sorts before '$20.00' as strings), so top_categories can return categories that are not actually the biggest spenders. The sort should use the raw integer cents value, not the formatted string."
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 60,
+      "category": "correctness",
+      "title": "Alphabetical tie-break not implemented",
+      "severity": "major",
+      "description": "The docstring claims ties are broken alphabetically, but the sort key only uses format_money(kv[1]); the category name is never included in the sort key, so tied categories retain arbitrary/insertion order from dict.items() rather than being ordered alphabetically."
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 58,
+      "category": "robustness",
+      "title": "No handling of n <= 0 or empty spend",
+      "severity": "minor",
+      "description": "top_categories does not validate n; passing n=0 or a negative n silently returns an empty or oddly-sliced list rather than raising a clear error, which could mask caller bugs."
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 58,
+      "category": "test-adequacy",
+      "title": "No tests added for top_categories",
+      "severity": "major",
+      "description": "The diff introduces a new public function with non-trivial sorting/formatting/tie-break behavior but adds no unit tests to verify ordering, truncation to n, tie-break behavior, or formatting output, so the numeric-vs-string sort bug above would not be caught."
+    }
+  ],
+  "seconds": 14.3,
+  "cost_usd": 0.019772799999999997,
+  "num_turns": 1
+}
