@@ -1,0 +1,65 @@
+{
+  "case": "case01_csv_export",
+  "system": "agent-v3",
+  "findings": [
+    {
+      "file": "ledgerly/export.py",
+      "line": 18,
+      "category": "security",
+      "title": "SQL injection via category filter",
+      "severity": "critical",
+      "description": "The `category` parameter is interpolated directly into the SQL string with an f-string instead of being passed as a bound parameter, while `user_id` correctly uses a placeholder. A caller-supplied category such as `' OR '1'='1` or `' UNION SELECT ... --` is spliced verbatim into the query, allowing an attacker who controls the category value (e.g., via an API endpoint that exposes this filter) to read other users' expenses or arbitrary table data, bypassing the `user_id` scoping entirely. Fix by binding category as a second parameter (e.g., `AND category = ?` with `(user_id, category)`).",
+      "reviewer": "security",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/export.py: category is spliced into SQL via f-string (`sql += f\" AND category = '{category}'\"`) while user_id uses a `?` placeholder. Confirmed db.py uses real sqlite3.execute(sql, params), so this is genuine SQL, not an ORM-escaped string. Reproduced the exploit end-to-end: created two users (alice=id1, bob=id2) where bob has an expense and alice has none, then called export_expenses_csv(db, user_id=1, filename=..., category=\"nope' OR '1'='1\"). The resulting CSV contained bob's expense row despite alice having zero expenses and the malicious string not matching any real category \u2014 because the generated SQL `WHERE user_id = ? AND category = 'nope' OR '1'='1'` has the trailing OR clause make the entire WHERE true due to operator precedence, bypassing both the category filter and the parameterized user_id scoping. This is a real, directly exploitable SQL injection allowing cross-user data exfiltration.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "ledgerly/export.py",
+      "line": 12,
+      "category": "security",
+      "title": "Path traversal via caller-supplied filename",
+      "severity": "critical",
+      "description": "`filename` is joined into `EXPORT_DIR` with `os.path.join` without any sanitization. If `filename` contains path traversal sequences (e.g., `../../etc/cron.d/evil`) or is an absolute path (e.g., `/etc/passwd`), `os.path.join` will honor it and the resulting `path` escapes the `exports/` directory, letting a caller overwrite arbitrary files on disk with CSV-formatted expense data. This is a write-primitive that can be used for file overwrite/corruption or, in some deployments, code execution (e.g., writing into a cron directory or web root). The filename should be restricted to a safe basename (e.g., via `os.path.basename` plus an allow-list/regex check) before being joined into the export path.",
+      "reviewer": "security",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/export.py: line 12 does `path = os.path.join(EXPORT_DIR, filename)` with no sanitization (no os.path.basename, no allow-list/regex, no realpath containment check) anywhere in the file or repo. Confirmed via python3 that os.path.join('exports', '../../etc/cron.d/evil') and os.path.join('exports', '/etc/passwd') both escape/override the base dir. Then actually invoked export_expenses_csv() with a fake db and filename='../victim_target/evil.csv': the function wrote the CSV file outside exports/ at the traversal target and os.path.exists on that external path returned True, proving a real write-primitive escaping EXPORT_DIR. Since filename is a caller-supplied parameter with no upstream sanitization present in the codebase, the vulnerable code path is genuinely reachable as described.",
+        "adjusted_severity": "critical"
+      }
+    }
+  ],
+  "raw_finding_count": 4,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 0,
+      "seconds": 52.9,
+      "cost_usd": 0.10796660000000001
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 2,
+      "seconds": 12.1,
+      "cost_usd": 0.027119200000000003
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 2,
+      "seconds": 26.1,
+      "cost_usd": 0.0445418
+    },
+    {
+      "stage": "verifier",
+      "in": 2,
+      "confirmed": 2,
+      "seconds": 28.2
+    }
+  ],
+  "seconds": 81.1,
+  "cost_usd": 0.3047
+}

@@ -1,0 +1,34 @@
+{
+  "id": "case21_perf_reports",
+  "title": "Report performance: single-query budget status",
+  "pr_description": "budget_status did 1 + N queries (a summary plus one per budget). This PR collapses it into a single LEFT JOIN aggregate, adds a covering index for the expense lookup path, and relaxes sqlite synchronous mode for faster writes. No behavior change intended.",
+  "clean": false,
+  "tier": 3,
+  "repo": "target_repo_pro",
+  "defects": [
+    {
+      "id": "c21-d1",
+      "file": "ledgerly/reports.py",
+      "anchor": "\"   AND e.category = b.category\"",
+      "category": "correctness",
+      "severity": "critical",
+      "description": "The LEFT JOIN matches expenses on user and category but NOT on month — the substr(e.spent_on,1,7) = b.month predicate was lost in the rewrite. Every budget's 'spent' now sums that category's expenses across all time, so any user with history is instantly over budget everywhere. Tests pass only because fixtures never span two months."
+    },
+    {
+      "id": "c21-d2",
+      "file": "ledgerly/db.py",
+      "anchor": "self.conn.execute(\"PRAGMA synchronous = OFF\")",
+      "category": "robustness",
+      "severity": "major",
+      "description": "synchronous = OFF trades durability for speed: a power loss or OS crash can corrupt the database or lose committed transactions — for a finance app storing money records. At most NORMAL is defensible, and never as an unconditional default smuggled into a perf PR."
+    },
+    {
+      "id": "c21-d3",
+      "file": "ledgerly/db.py",
+      "anchor": "CREATE INDEX idx_expenses_user_category",
+      "category": "robustness",
+      "severity": "major",
+      "description": "The new index lacks IF NOT EXISTS while every table in the same executescript uses IF NOT EXISTS. SCHEMA runs on every Database() construction, so opening an existing database file a second time raises OperationalError: index already exists. In-memory test databases never reopen, which is why CI stays green."
+    }
+  ]
+}

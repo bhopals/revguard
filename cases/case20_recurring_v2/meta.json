@@ -1,0 +1,34 @@
+{
+  "id": "case20_recurring_v2",
+  "title": "Recurring rules: biweekly cadence and pause/resume",
+  "pr_description": "Adds the two most requested recurring-rule features: a biweekly cadence (every second week on a weekday) and pause/resume so users can suspend a subscription rule while keeping its history. Tests included for both.",
+  "clean": false,
+  "tier": 3,
+  "repo": "target_repo_pro",
+  "defects": [
+    {
+      "id": "c20-d1",
+      "file": "ledgerly/recurring.py",
+      "anchor": "if d.weekday() == rule[\"weekday\"]:  # biweekly",
+      "category": "correctness",
+      "severity": "critical",
+      "description": "The biweekly branch matches every date whose weekday equals the rule's weekday — identical to weekly. Nothing tracks which alternate week the rule is anchored to, so a $200 'biweekly' rule charges $200 weekly, double-billing the user. Run occurrences_between over a 4-week window: it returns 4 dates, not 2."
+    },
+    {
+      "id": "c20-d2",
+      "file": "ledgerly/recurring.py",
+      "anchor": "\"UPDATE recurring_rules SET active = 1 WHERE id = ?\", (rule_id,)",
+      "category": "correctness",
+      "severity": "critical",
+      "description": "resume_rule reactivates the rule but leaves last_materialized at its pre-pause value, and the docstring promises charging resumes 'from now'. The next materialize_due back-fills an expense for every occurrence during the paused period — a rule paused for six months gets six months of charges on resume. resume must also advance last_materialized to today."
+    },
+    {
+      "id": "c20-d3",
+      "file": "tests/test_recurring.py",
+      "anchor": "rule, date(2026, 3, 2), date(2026, 3, 10))",
+      "category": "test-adequacy",
+      "severity": "major",
+      "description": "The biweekly test spans only 8 days, a window in which weekly and biweekly cadences produce the identical single occurrence — it cannot distinguish the two. A 4-week window would fail against this implementation."
+    }
+  ]
+}

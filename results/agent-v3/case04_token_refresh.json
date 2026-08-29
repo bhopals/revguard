@@ -1,0 +1,65 @@
+{
+  "case": "case04_token_refresh",
+  "system": "agent-v3",
+  "findings": [
+    {
+      "file": "ledgerly/auth.py",
+      "line": 70,
+      "category": "correctness",
+      "title": "UPDATE statement missing WHERE clause updates every token in the table",
+      "severity": "critical",
+      "description": "The UPDATE in refresh_token has no WHERE clause, so `db.execute(\"UPDATE tokens SET expires_at = ?\", (new_expiry,))` sets expires_at for every row in the tokens table, not just the token being refreshed. Concrete scenario: user A logs in (token_a expires in 24h), user B logs in later (token_b expires in 24h + delta). If user A calls refresh_token, every session in the system \u2014 including user B's and any other logged-in user's \u2014 gets its expiry overwritten to A's new refresh time. This silently extends (or in other orderings, could shorten) other users' sessions and defeats per-session expiry entirely. The statement should be `\"UPDATE tokens SET expires_at = ? WHERE token = ?\"` with token bound as a parameter.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/auth.py:65-73, confirmed the diff exactly: refresh_token() runs `db.execute(\"UPDATE tokens SET expires_at = ?\", (new_expiry,))` with no WHERE clause. Wrote a reproduction script registering two users (alice, bob), logging both in to create two token rows, then calling auth.refresh_token(db, token_a). Query of the tokens table before/after showed both token_a's AND token_b's expires_at rows were overwritten to the same new value, confirming that refreshing one user's session silently changes every other session's expiry in the table. This matches the reviewer's concrete scenario precisely.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "tests/test_ledgerly.py",
+      "line": 60,
+      "category": "test-adequacy",
+      "title": "New test only checks a tautological return value, never verifies the refresh side effect",
+      "description": "refresh_token() always returns the token argument unconditionally (ledgerly/auth.py:73), regardless of whether the UPDATE statement matched any rows or whether the new expiry is even valid. The test `assert auth.refresh_token(db, token) == token` therefore cannot fail even if the UPDATE is a no-op, updates the wrong row, or corrupts the expiry. The test never queries the tokens table to check that expires_at actually advanced, and never calls auth.authenticate(db, token) afterward to confirm the token is still usable. This masks a real bug: refresh_token writes a naive datetime.now() (auth.py:68) into expires_at, while authenticate() (auth.py:83-84) compares it against an offset-aware datetime.now(timezone.utc), which raises TypeError on the very next authenticate call after a refresh \u2014 a failure this test would have caught had it re-authenticated.",
+      "reviewer": "tests",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/auth.py: refresh_token() (line 68) writes datetime.now() (naive) into expires_at, while authenticate() (line 84) compares against datetime.now(timezone.utc) (aware). Reproduced live: after auth.login -> auth.refresh_token -> auth.authenticate raises TypeError: can't compare offset-naive and offset-aware datetimes. Ran the actual new test (tests/test_ledgerly.py::TestAuth::test_refresh_token) and it PASSES despite this bug, since it only asserts refresh_token(db, token) == token (a value returned unconditionally per auth.py:73) and never calls authenticate() afterward or checks expires_at in the DB. Confirms the finding exactly as described.",
+        "adjusted_severity": "major"
+      },
+      "severity": "major"
+    }
+  ],
+  "raw_finding_count": 5,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 2,
+      "seconds": 30.0,
+      "cost_usd": 0.054846400000000003
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 1,
+      "seconds": 33.9,
+      "cost_usd": 0.0699558
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 2,
+      "seconds": 24.2,
+      "cost_usd": 0.0493258
+    },
+    {
+      "stage": "verifier",
+      "in": 2,
+      "confirmed": 2,
+      "seconds": 34.4
+    }
+  ],
+  "seconds": 68.3,
+  "cost_usd": 0.3146
+}

@@ -1,0 +1,46 @@
+{
+  "case": "case16_top_categories",
+  "system": "agent-v2",
+  "findings": [
+    {
+      "file": "tests/test_ledgerly.py",
+      "line": 108,
+      "category": "test-adequacy",
+      "title": "No tests added for new top_categories() function",
+      "severity": "major",
+      "description": "The PR adds ledgerly/reports.py:59-71 (top_categories) with no accompanying test in TestReports. The function sorts categories by their formatted string (`format_money(kv[1])`) rather than by the numeric cents value, so amounts with differing digit counts sort lexicographically instead of numerically (e.g. a category spending 10000 cents formats to '$100.00' and one spending 9900 cents formats to '$99.00'; '$100.00' < '$99.00' as a string comparison, so with n=1 the function would return the smaller $99.00 category as 'top' instead of $100.00). A test with two categories whose spend differs in digit count (e.g. 10000 vs 9900 cents) would have caught this ordering bug, but no such test \u2014 or any test at all \u2014 exists for this new function.",
+      "reviewer": "tests"
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 65,
+      "category": "correctness",
+      "title": "Categories sorted by formatted string instead of numeric cents",
+      "description": "`sorted(spend.items(), key=lambda kv: format_money(kv[1]), reverse=True)` sorts by the string returned by `format_money` (e.g. \"$99.00\", \"$200.00\") rather than the numeric amount. Lexicographic comparison of these strings does not match numeric order once dollar amounts have different digit counts: e.g. a category with 9900 cents (\"$99.00\") sorts ahead of one with 20000 cents (\"$200.00\") because '9' > '2' as characters, even though $200 is the larger spend. This makes top_categories() return the wrong ranking whenever spend totals cross a digit-length boundary (e.g. two-digit vs three-digit dollar amounts), which is exactly the kind of data a 'top spending categories' widget must get right.",
+      "reviewer": "correctness"
+    }
+  ],
+  "raw_finding_count": 3,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 2,
+      "seconds": 23.3,
+      "cost_usd": 0.0434554
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 0,
+      "seconds": 12.4,
+      "cost_usd": 0.036644
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 1,
+      "seconds": 28.4,
+      "cost_usd": 0.06740460000000001
+    }
+  ],
+  "seconds": 28.4,
+  "cost_usd": 0.1475
+}

@@ -1,0 +1,56 @@
+{
+  "case": "case12_account_deletion",
+  "system": "agent-v2",
+  "findings": [
+    {
+      "file": "ledgerly/account.py",
+      "line": 17,
+      "category": "correctness",
+      "title": "delete_account deletes parent row before children, violating FK constraints",
+      "severity": "critical",
+      "description": "db.py enables `PRAGMA foreign_keys = ON` (ledgerly/db.py:49), and expenses.user_id, budgets.user_id, and tokens.user_id all have `REFERENCES users(id)`. delete_account() issues `DELETE FROM users WHERE id = ?` first (line 17) before deleting the dependent expenses/tokens rows (lines 18-19). For any user who has ever logged in (which creates a tokens row via auth.login) or logged an expense, this first DELETE will raise sqlite3.IntegrityError because child rows still reference the user, and the whole account deletion aborts on line 17 before expenses/tokens are ever removed. The function as written cannot succeed for a realistic account with any activity, contradicting its purpose of removing the user.",
+      "reviewer": "correctness"
+    },
+    {
+      "file": "ledgerly/account.py",
+      "line": 9,
+      "category": "security",
+      "title": "Bulk expense delete lacks ownership scoping (IDOR)",
+      "severity": "critical",
+      "description": "delete_expenses_bulk() deletes rows solely by `id IN (...)` with no `user_id = ?` filter, unlike every other expense query in this codebase (see expenses.py get_expense/delete_expense/list_expenses, all scoped by user_id). Any caller (e.g. an authenticated user hitting the bulk-delete UI action) can pass arbitrary expense_ids \u2014 including IDs belonging to other users \u2014 and have them deleted, since the user_id parameter is accepted but never used in the query. This is a broken access control / IDOR vulnerability allowing cross-tenant data destruction.",
+      "reviewer": "security"
+    },
+    {
+      "file": "ledgerly/account.py",
+      "line": 4,
+      "category": "test-adequacy",
+      "severity": "major",
+      "title": "No test verifying delete_expenses_bulk respects expense ownership",
+      "description": "delete_expenses_bulk(db, user_id, expense_ids) accepts a user_id parameter but the DELETE statement (lines 9-12) filters only by `id IN (...)` with no `user_id` condition, so it will delete expenses belonging to other users if their ids are passed in. The existing test suite establishes an ownership-enforcement pattern for expense operations (test_ownership_enforced in tests/test_ledgerly.py), but no equivalent test was added for this new bulk-delete function. A test that creates expenses for two different users and calls delete_expenses_bulk with another user's expense ids would have caught that cross-user deletion is currently unguarded.",
+      "reviewer": "tests"
+    }
+  ],
+  "raw_finding_count": 5,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 2,
+      "seconds": 37.9,
+      "cost_usd": 0.08258860000000001
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 1,
+      "seconds": 15.7,
+      "cost_usd": 0.0377856
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 2,
+      "seconds": 25.1,
+      "cost_usd": 0.061882200000000005
+    }
+  ],
+  "seconds": 37.9,
+  "cost_usd": 0.1823
+}

@@ -1,0 +1,42 @@
+{
+  "id": "case18_import_v2",
+  "title": "Importer v2: category mapping and atomic batches",
+  "pr_description": "Statement import learns two things users kept asking for: map merchant descriptions to categories (case-insensitive prefix rules, e.g. 'COFFEE' -> food), and all-or-nothing batches so a bad row no longer leaves a half-imported statement. Duplicate detection was also simplified and sped up by keying on (date, amount).",
+  "clean": false,
+  "tier": 3,
+  "repo": "target_repo_pro",
+  "defects": [
+    {
+      "id": "c18-d1",
+      "file": "ledgerly/importers.py",
+      "anchor": "\" AND amount_cents = ?\",",
+      "category": "correctness",
+      "severity": "critical",
+      "description": "Deduplication now keys on (date, amount) only — the description was dropped from the check. Two different merchants charging the same amount on the same day (two $9.99 subscriptions) means the second is silently skipped as a 'duplicate'. Data loss relative to v1, which included the note."
+    },
+    {
+      "id": "c18-d2",
+      "file": "ledgerly/importers.py",
+      "anchor": "if desc.upper().startswith(prefix):",
+      "category": "correctness",
+      "severity": "major",
+      "description": "The description is uppercased but the user-supplied mapping prefix is used as-given, so any mapping rule not written in ALL CAPS ('Coffee' -> food) never matches and the docstring's 'case-insensitive' promise is false. Both sides must be normalized."
+    },
+    {
+      "id": "c18-d3",
+      "file": "ledgerly/importers.py",
+      "anchor": "with db.transaction():",
+      "category": "correctness",
+      "severity": "major",
+      "description": "The batch is wrapped in db.transaction(), but every add_expense call goes through db.execute, which runs its own transaction and COMMITs immediately (see db.py). A failure mid-batch still leaves earlier rows committed — the advertised all-or-nothing behavior does not exist."
+    },
+    {
+      "id": "c18-d4",
+      "file": "tests/test_importers.py",
+      "anchor": "def test_atomic_batch(self, db, user):",
+      "category": "test-adequacy",
+      "severity": "major",
+      "description": "The test named test_atomic_batch imports an all-valid statement and asserts success. It never includes a failing row, so it cannot detect that atomicity is broken — the one scenario it is named after."
+    }
+  ]
+}

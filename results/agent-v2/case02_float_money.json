@@ -1,0 +1,46 @@
+{
+  "case": "case02_float_money",
+  "system": "agent-v2",
+  "findings": [
+    {
+      "file": "ledgerly/utils.py",
+      "line": 20,
+      "category": "correctness",
+      "severity": "critical",
+      "title": "parse_money no longer rejects negative or zero amounts",
+      "description": "The old implementation raised ValueError when total <= 0 (docstring: 'Raises ValueError on malformed input or negative/zero amounts'). That check was deleted; the new docstring even drops the 'negative/zero' clause. Now parse_money(\"-5\") returns -500 and parse_money(\"0\") returns 0 without error (the test suite even removed \"-5\" from the rejection list, confirming this). Callers like ledgerly.expenses.add_expense() take amount_cents as-is and insert it directly into the DB with no re-validation, so a user-supplied negative or zero amount is silently persisted, corrupting SUM(amount_cents) totals in ledgerly/reports.py. This is a guarantee the old code enforced that is now silently dropped.",
+      "reviewer": "correctness"
+    },
+    {
+      "file": "tests/test_ledgerly.py",
+      "line": 28,
+      "category": "test-adequacy",
+      "title": "Negative-amount rejection test silently deleted instead of updated",
+      "description": "The old test asserted parse_money('-5') raises ValueError (enforcing 'amount must be positive'). The PR removes '-5' from the garbage list because the new float-based implementation no longer rejects negative amounts (parse_money('-5') now returns -500 instead of raising). The PR deletes the assertion rather than adding a test that documents/verifies this behavior change, so the regression (money parser now accepts negative amounts, e.g. an expense entry of '-5' would silently create a -$5.00 record) is invisible to the test suite.",
+      "reviewer": "tests"
+    }
+  ],
+  "raw_finding_count": 6,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 4,
+      "seconds": 69.7,
+      "cost_usd": 0.12355339999999998
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 0,
+      "seconds": 45.5,
+      "cost_usd": 0.09924360000000002
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 2,
+      "seconds": 18.9,
+      "cost_usd": 0.04384059999999999
+    }
+  ],
+  "seconds": 69.7,
+  "cost_usd": 0.2666
+}

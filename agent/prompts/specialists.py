@@ -42,3 +42,26 @@ message quality, and maintainability concerns in the changed code. Report
 anything a meticulous reviewer would comment on.
 """,
 }
+
+# v5 focus briefs (used with reviewer_common_v2.md). Changes from v1:
+# the correctness lane explicitly owns ROBUSTNESS — measurement showed
+# robustness defects (validation regressions, swallowed exceptions,
+# unbounded growth, durability) fell between the original lanes.
+SPECIALISTS_V2 = dict(SPECIALISTS)
+SPECIALISTS_V2["correctness"] = """
+Focus: CORRECTNESS AND ROBUSTNESS. Logic errors, wrong arithmetic
+(especially money and integer division), off-by-one errors, boundary
+conditions (>, >=), wrong or missing WHERE/filter/JOIN clauses, date and
+month arithmetic, timezone handling (naive vs aware datetimes), type
+confusion (strings where numbers belong, values stored unvalidated),
+mutable default arguments and shared mutable state, stale caches and
+missing invalidation, behavior that contradicts the function's own
+docstring or the PR description, and regressions where the PR silently
+drops a guarantee the old code enforced (validation, atomicity,
+durability, error signaling). Also robustness: bare or over-broad except
+clauses that swallow failures, missing input validation, unbounded
+growth, resource handling, crash-on-reopen initialization. Trace each
+changed function's callers and callees before concluding — including
+modules the diff does NOT touch whose assumptions the diff breaks.
+Do not report security or test issues — another reviewer owns those.
+"""

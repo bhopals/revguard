@@ -1,0 +1,34 @@
+{
+  "id": "case19_household_invites",
+  "title": "Household invite codes",
+  "pr_description": "Owners can now invite people without knowing their user id: create_invite() issues a short shareable code, accept_invite() joins the caller to the household. Includes schema and tests.",
+  "clean": false,
+  "tier": 3,
+  "repo": "target_repo_pro",
+  "defects": [
+    {
+      "id": "c19-d1",
+      "file": "ledgerly/household.py",
+      "anchor": "code = \"%06x\" % random.randrange(16 ** 6)",
+      "category": "security",
+      "severity": "major",
+      "description": "Invite codes are 6 hex chars (~16.7M values) from the predictable random module. auth.py consistently uses secrets for tokens; a guessable invite code lets strangers join households and read shared financial data."
+    },
+    {
+      "id": "c19-d2",
+      "file": "ledgerly/household.py",
+      "anchor": "def accept_invite(db, code, user_id):",
+      "category": "correctness",
+      "severity": "major",
+      "description": "accept_invite inserts the member directly and never checks MAX_MEMBERS, bypassing the cap that add_member enforces a screen up. Households can grow without bound through invites."
+    },
+    {
+      "id": "c19-d3",
+      "file": "ledgerly/household.py",
+      "anchor": "\"SELECT household_id FROM invites WHERE code = ?\", (code,)",
+      "category": "security",
+      "severity": "major",
+      "description": "Accepted invites are never consumed or expired — no used_at update, no expiry check, no delete. One leaked code admits unlimited people forever. The invites table even has a used_at column that nothing writes."
+    }
+  ]
+}

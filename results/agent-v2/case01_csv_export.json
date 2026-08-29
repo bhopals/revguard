@@ -1,0 +1,47 @@
+{
+  "case": "case01_csv_export",
+  "system": "agent-v2",
+  "findings": [
+    {
+      "file": "ledgerly/export.py",
+      "line": 18,
+      "category": "security",
+      "title": "SQL injection via category filter",
+      "severity": "critical",
+      "description": "The `category` parameter is interpolated directly into the SQL string with an f-string instead of being passed as a bound parameter (unlike `user_id` on line 15, which correctly uses `?`). Any caller that passes a category value derived from user input (e.g., a web request query param) allows SQL injection, e.g. category = \"x' OR '1'='1\" or a UNION-based injection to exfiltrate data from other tables/users, or a stacked query depending on the driver. This directly contradicts the parameterization pattern already used one line above for user_id, showing this is an inconsistency introduced by the PR rather than a pre-existing pattern.",
+      "reviewer": "security"
+    },
+    {
+      "file": "ledgerly/export.py",
+      "line": 12,
+      "category": "security",
+      "title": "Path traversal via caller-supplied filename",
+      "severity": "critical",
+      "description": "`filename` is joined onto EXPORT_DIR with os.path.join and used directly to open a file for writing, with no validation or sanitization. If `filename` originates from user input (e.g., an API request parameter, as is typical for an export feature), a value like `../../etc/cron.d/evil` or an absolute path `/etc/passwd` (os.path.join drops the base dir when the second component is absolute) lets the caller write the CSV to an arbitrary filesystem location outside exports/, enabling file overwrite attacks on other users' exports or system files the process can write to.",
+      "reviewer": "security"
+    }
+  ],
+  "raw_finding_count": 4,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 0,
+      "seconds": 41.6,
+      "cost_usd": 0.0840242
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 2,
+      "seconds": 19.0,
+      "cost_usd": 0.0380354
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 2,
+      "seconds": 19.8,
+      "cost_usd": 0.037222000000000005
+    }
+  ],
+  "seconds": 41.6,
+  "cost_usd": 0.1593
+}
