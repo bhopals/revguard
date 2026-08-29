@@ -1,0 +1,41 @@
+{
+  "tinydb_445": {
+    "upstream": "https://github.com/msiemens/tinydb",
+    "license": "MIT (LICENSE vendored)",
+    "commit": "f200118e1401cf49df009915d29475cca8920dbc",
+    "title": "feat: support `map` query operation (#445)",
+    "description": "Support adding callables to path; document `map` in readme; test that `map` can be followed by other path items.",
+    "escaped_bug": {
+      "summary": "table.py now calls cond.is_cacheable() on every query object, but TinyDB's public API accepts plain callables as queries, which have no such method - every search/update/remove with a bare callable raises AttributeError.",
+      "expect_in": ["tinydb/table.py"],
+      "expect_keywords": ["is_cacheable", "callable"],
+      "real_world_fix": "Fixed 8 days later in 1fa99fb (issue #454): 'fix: make query callables work again ... got broken in v4.6.0'."
+    }
+  },
+  "schedule_refactor": {
+    "upstream": "https://github.com/dbader/schedule",
+    "license": "MIT (LICENSE.txt vendored)",
+    "commit": "6c8fcc5d39b691f200583c3d40500bacc7e54fa7",
+    "title": "Make the at() function easier to read",
+    "description": "Refactor of Job.at()'s time string parsing for readability. No behavior change intended.",
+    "escaped_bug": {
+      "summary": "The refactored branch reads `elif len(time_values) == 1 ...` but then unpacks `_, second = time_values` - two targets from a one-element list, so the at(':SS') syntax always raises ValueError.",
+      "expect_in": ["schedule/__init__.py"],
+      "expect_keywords": ["time_values", "unpack", "ValueError"],
+      "real_world_fix": "Fixed by the same author in 245728b ('Fix a bug where the at(\\':SS\\') syntax wasn\\'t working'); the correct guard is len == 2."
+    }
+  },
+  "schedule_517": {
+    "upstream": "https://github.com/dbader/schedule",
+    "license": "MIT (LICENSE.txt vendored)",
+    "commit": "3eac646a8d2658929587d7454bd2c85696df254e",
+    "title": "Add timezone support for .at() (#517)",
+    "description": "Allow passing a pytz timezone to .at(); at_time is interpreted in that timezone and converted to local time when computing next_run.",
+    "escaped_bug": {
+      "summary": "With a timezone, self.at_time is a foreign-timezone wall-clock time, but the untouched pre-existing comparison `self.at_time > now.time()` in _schedule_next_run still compares it directly to naive local time, scheduling runs a day off around the boundary.",
+      "expect_in": ["schedule/__init__.py"],
+      "expect_keywords": ["at_time", "now.time", "timezone"],
+      "real_world_fix": "Fixed ~2 years later in 1b34599 (#583): comparison changed to self.next_run.time() > now.time(); further fixes in #604."
+    }
+  }
+}
