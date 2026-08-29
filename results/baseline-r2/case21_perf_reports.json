@@ -1,0 +1,41 @@
+{
+  "case": "case21_perf_reports",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/reports.py",
+      "line": 44,
+      "category": "correctness",
+      "title": "LEFT JOIN omits date/month filter on expenses",
+      "description": "The new query joins expenses to budgets only on user_id and category, with no condition tying e.spent_on to the requested `month`. This aggregates a category's spend across all time instead of just the target month, unlike the original monthly_summary() which scoped expenses to the month. Budget status will report inflated 'spent'/'remaining'/'over_budget' values for any user with expenses in that category from other months, despite the PR claiming 'no behavior change'.",
+      "severity": "critical"
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 40,
+      "category": "test-adequacy",
+      "description": "No test was added/updated to verify budget_status only counts expenses within the given month for a category that also has expenses in other months. Such a test would have caught the missing month filter in the new JOIN query.",
+      "severity": "major",
+      "title": "Missing regression test for month-scoped spend aggregation"
+    },
+    {
+      "file": "ledgerly/db.py",
+      "line": 100,
+      "category": "robustness",
+      "title": "CREATE INDEX not idempotent, breaks reopening existing database",
+      "description": "SCHEMA is executed via executescript() every time DB() is constructed, implying the DDL must be safe to re-run against an already-initialized database file (the existing CREATE TABLE statements presumably use IF NOT EXISTS for this reason). The new `CREATE INDEX idx_expenses_user_category ...` has no IF NOT EXISTS clause, so opening the DB a second time against an existing file (e.g. app restart) will raise sqlite3.OperationalError: index already exists.",
+      "severity": "major"
+    },
+    {
+      "file": "ledgerly/db.py",
+      "line": 110,
+      "category": "robustness",
+      "title": "synchronous=OFF risks database corruption on crash/power loss",
+      "description": "Setting PRAGMA synchronous = OFF disables fsync at critical points; on an OS crash or power loss (not just an application crash) the database file can become corrupted, and recent committed transactions can be lost. For a financial/expense-tracking application this is a significant durability regression introduced purely for write speed, without at least using WAL mode + synchronous=NORMAL, which offers a much safer speed/durability tradeoff.",
+      "severity": "major"
+    }
+  ],
+  "seconds": 48.9,
+  "cost_usd": 0.0602608,
+  "num_turns": 1
+}
