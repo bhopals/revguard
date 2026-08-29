@@ -1,0 +1,16 @@
+{
+  "case": "case09_report_refactor",
+  "system": "agent-v1",
+  "findings": [],
+  "raw_finding_count": 0,
+  "stages": [
+    {
+      "stage": "reviewer_generalist",
+      "findings": 0,
+      "seconds": 8.9,
+      "cost_usd": 0.028225000000000004
+    }
+  ],
+  "seconds": 8.9,
+  "cost_usd": 0.0282
+}

@@ -9,6 +9,9 @@
       "id": "c15-d1",
       "file": "ledgerly/reports.py",
       "anchor": "_summary_cache[key] = totals",
+      "alt_anchors": [
+        {"file": "ledgerly/reports.py", "anchor": "if key in _summary_cache:"}
+      ],
       "category": "correctness",
       "severity": "critical",
       "description": "Nothing ever invalidates the cache. expenses.add_expense and delete_expense (outside this diff) mutate the underlying rows, so after any new expense the dashboard, budget_status and over-budget flags serve stale totals for the rest of the process lifetime."
@@ -28,6 +31,14 @@
       "category": "test-adequacy",
       "severity": "major",
       "description": "The added test calls monthly_summary twice with no writes in between and asserts the results are equal — that can never fail and specifically avoids the write-then-read sequence that exposes the stale cache."
+    },
+    {
+      "id": "c15-d4",
+      "file": "ledgerly/reports.py",
+      "anchor": "return _summary_cache[key]",
+      "category": "correctness",
+      "severity": "minor",
+      "description": "Cache hits return the cached dict by reference, so any caller mutating its result poisons the cache for every subsequent reader. Should return a copy. Added during label adjudication."
     }
   ]
 }

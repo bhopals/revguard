@@ -17,6 +17,9 @@
       "id": "c14-d2",
       "file": "ledgerly/expenses.py",
       "anchor": "(user_id, amount_cents, currency, category, note,",
+      "alt_anchors": [
+        {"file": "ledgerly/db.py", "anchor": "currency TEXT NOT NULL DEFAULT 'USD',"}
+      ],
       "category": "robustness",
       "severity": "major",
       "description": "currency is stored without any validation, unlike category which is checked against VALID_CATEGORIES two lines up. Any string ('usd', 'EURO', '💶') is accepted, fragmenting future per-currency grouping."

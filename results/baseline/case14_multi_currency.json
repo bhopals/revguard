@@ -1,0 +1,41 @@
+{
+  "case": "case14_multi_currency",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 18,
+      "category": "correctness",
+      "severity": "critical",
+      "title": "Reporting/aggregation not updated for multi-currency expenses",
+      "description": "add_expense now allows storing expenses in any currency, but the PR description states reporting is unchanged. Any report or summary function that sums amount_cents across a user's expenses will now silently add together amounts in different currencies (e.g. USD cents + EUR cents) as if they were the same unit, producing meaningless/incorrect totals. Multi-currency support needs either currency-aware aggregation or explicit conversion before this feature is safe to ship."
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 18,
+      "category": "robustness",
+      "severity": "major",
+      "title": "currency parameter is unvalidated",
+      "description": "Unlike category, the new currency argument is inserted directly into the database with no validation. Callers can pass an empty string, lowercase codes, non-ISO-4217 strings, or arbitrarily long text, leading to inconsistent/garbage data in the currency column (e.g. 'usd' vs 'USD' would be treated as different currencies by any downstream grouping logic)."
+    },
+    {
+      "file": "ledgerly/db.py",
+      "line": 22,
+      "category": "robustness",
+      "severity": "minor",
+      "title": "No constraint on currency column values",
+      "description": "The currency column has no CHECK constraint or length limit, so combined with the missing application-level validation, the database can end up storing arbitrary strings as currency codes rather than valid 3-letter ISO codes."
+    },
+    {
+      "file": "tests/test_ledgerly.py",
+      "line": 82,
+      "category": "test-adequacy",
+      "severity": "minor",
+      "title": "Missing tests for invalid currency and reporting impact",
+      "description": "The only new test verifies a valid currency round-trips correctly. There is no test asserting invalid/empty currency values are rejected, and no test covering how existing reporting/summary functions behave when expenses use mixed currencies, which is exactly the scenario this feature introduces."
+    }
+  ],
+  "seconds": 22.6,
+  "cost_usd": 0.0361208,
+  "num_turns": 1
+}

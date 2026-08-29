@@ -1,0 +1,16 @@
+{
+  "case": "case05_new_categories",
+  "system": "agent-v1",
+  "findings": [],
+  "raw_finding_count": 0,
+  "stages": [
+    {
+      "stage": "reviewer_generalist",
+      "findings": 0,
+      "seconds": 20.7,
+      "cost_usd": 0.06625400000000001
+    }
+  ],
+  "seconds": 20.7,
+  "cost_usd": 0.0663
+}

@@ -27,6 +27,22 @@
       "category": "security",
       "severity": "major",
       "description": "A 6-digit code can be brute-forced in at most a million attempts and nothing limits attempts or invalidates the code after failures; the comparison is also not constant-time."
+    },
+    {
+      "id": "c07-d4",
+      "file": "ledgerly/auth.py",
+      "anchor": "del _reset_codes[username]",
+      "category": "security",
+      "severity": "major",
+      "description": "After a successful password reset, existing session tokens are not revoked. If the account was compromised (the very scenario resets exist for), the attacker's session keeps working after the victim resets. Added during label adjudication: found by a system under evaluation, confirmed genuine."
+    },
+    {
+      "id": "c07-d5",
+      "file": "ledgerly/auth.py",
+      "anchor": "_reset_codes = {}",
+      "category": "robustness",
+      "severity": "minor",
+      "description": "Reset codes live only in process memory: any restart or deploy invalidates outstanding codes, and multiple workers (each with their own dict) make the flow fail randomly behind a load balancer. Added during label adjudication."
     }
   ]
 }
