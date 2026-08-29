@@ -1,0 +1,33 @@
+{
+  "case": "case21_perf_reports",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/reports.py",
+      "line": 44,
+      "category": "correctness",
+      "severity": "critical",
+      "title": "Budget spend no longer filtered by month",
+      "description": "The new LEFT JOIN only matches expenses on user_id and category, with no condition on the expense date (e.g. e.spent_on falling within the requested month). The old code computed spend via monthly_summary(db, user_id, month), which scoped expenses to the target month. Now every expense ever recorded in a category is summed into 'spent' for every month's budget_status call, inflating spend, corrupting remaining/over_budget for all months except (at best) the first one a category was used in. This is a silent behavior change despite the PR claiming 'no behavior change intended', and will misreport budget status for essentially all real usage with more than one month of data."
+    },
+    {
+      "file": "ledgerly/db.py",
+      "line": 110,
+      "category": "robustness",
+      "severity": "major",
+      "title": "PRAGMA synchronous = OFF risks database corruption on crash",
+      "description": "Setting synchronous=OFF disables fsync at the critical moments SQLite normally uses to guarantee durability and consistency; on OS crash or power loss the database file can become corrupted (not just lose recent transactions, but the file itself can be left in an invalid state), unlike synchronous=NORMAL/FULL which only risk losing the last few transactions in WAL mode. For a financial ledger storing expense/budget data, trading correctness/durability for write speed is a significant risk that isn't mentioned or justified in the PR description, and there's no compensating measure (e.g., WAL mode) to bound the damage."
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 46,
+      "category": "test-adequacy",
+      "severity": "major",
+      "title": "No regression test for cross-month spend leakage",
+      "description": "The PR changes the SQL powering budget_status but includes no test verifying that spend from a different month is excluded from a given month's budget report. Such a test would have caught the missing date filter on the joined expenses table before merge."
+    }
+  ],
+  "seconds": 37.0,
+  "cost_usd": 0.0515618,
+  "num_turns": 1
+}

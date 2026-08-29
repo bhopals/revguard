@@ -71,7 +71,9 @@ Open the report:
 open results/demo/case21_perf_reports_report.html    # or _report.md
 ```
 
-You'll see two CRITICAL findings, each with the verifier's evidence quoted:
+You'll see the seeded bugs, each with the verifier's evidence quoted (a fresh
+run catches two or three of them — LLM runs vary slightly; the two criticals
+are always caught):
 
 - `ledgerly/reports.py:44` — the refactor's new JOIN lost its month filter, so
   every budget sums a category's spend **across all time**. Tests pass only
@@ -79,6 +81,8 @@ You'll see two CRITICAL findings, each with the verifier's evidence quoted:
 - `ledgerly/db.py:100` — a new `CREATE INDEX` without `IF NOT EXISTS` crashes
   the app the **second** time the database is opened. Tests never catch it
   because they use in-memory databases that never reopen.
+- `ledgerly/db.py:110` — `PRAGMA synchronous = OFF` silently trades crash
+  durability for speed in a finance app.
 
 **The money shot:** open the verifier's trajectory for the second bug —
 
