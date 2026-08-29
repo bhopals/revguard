@@ -2,6 +2,10 @@
 
 *micro1 Frontier Engineering Challenge 2026 — Agentic Workflows Hackathon*
 
+Everything in this repository — code, benchmark, prompts, docs — was
+created during the event (see git history). Pre-existing components used:
+Python 3.12, pytest, and the Claude Code CLI as the agent runtime.
+
 ## The user and the bottleneck
 
 The intended user is an engineering team where **senior reviewers are the
@@ -99,7 +103,7 @@ were honest.
 
 ## Results
 
-Two findings, in order of importance:
+Three findings, in order of importance:
 
 **1. The base model has solved small-PR review.** On the 16 small-PR
 cases the one-prompt baseline found 39/39 seeded defects. Any agent
@@ -176,15 +180,19 @@ with Python 3.10+, pytest, and a logged-in Claude Code CLI.
 ## Repository layout
 
 ```
-target_repo/     Ledgerly, the codebase under review (all tests pass)
-cases/           22 PR cases: changed files + anchor-based ground truth
-baseline/        the fair baseline: one prompt, diff inline, no tools
-agent/           RevGuard pipeline (configs v1-v4 = changelog iterations)
-eval/            fixed scoring rule + comparison table
-tools/           case utilities + benchmark validator
-results/         findings, reports, timing, cost (scoring input)
-trajectories/    full stream-json trajectory of every agent invocation
-docs/            reproduction guide, changelog, dashboard, video script
+target_repo/       Ledgerly, the tier-1/2 codebase under review (tests pass)
+target_repo_pro/   the expanded tier-3 codebase (10 modules, 53 tests)
+cases/             22 PR cases: changed files + anchor-based ground truth
+baseline/          the fair baseline: one prompt, diff inline, no tools
+agent/             RevGuard pipeline (configs v1-v5 = changelog iterations)
+revguard.py        CLI: run the pipeline on any real git repository
+eval/              fixed scoring rule, comparison table, dashboard
+tools/             case utilities, validator, adjudication, renderers
+results/           findings, reports, timing, cost (scoring input)
+trajectories/      full stream-json trajectory of every agent invocation
+reviews/           real-repo review outputs (committed dogfood demo)
+docs/              reproduction guide, changelog, dashboard, video script
+tests/             self-tests for the scoring harness itself
 ```
 
 ### Representative trajectories (all rendered as .md beside the .jsonl)
