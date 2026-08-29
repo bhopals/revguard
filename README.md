@@ -8,7 +8,8 @@ Python 3.12, pytest, and the Claude Code CLI as the agent runtime.
 
 > **New here?** Read [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md) for a full
 > plain-English tour of every file and how the pipeline works step by step,
-> then [docs/DEMO.md](docs/DEMO.md) for copy-paste commands to run it live.
+> then run `make validate && make agent && make eval` (see
+> [docs/REPRODUCTION.md](docs/REPRODUCTION.md)).
 
 ## The user and the bottleneck
 
@@ -214,7 +215,7 @@ tools/             case utilities, validator, adjudication, renderers
 results/           findings, reports, timing, cost (scoring input)
 trajectories/      full stream-json trajectory of every agent invocation
 reviews/           real-repo review outputs (committed dogfood demo)
-docs/              reproduction guide, changelog, dashboard, video script
+docs/              walkthrough, reproduction guide, changelog, dashboard
 tests/             self-tests for the scoring harness itself
 ```
 

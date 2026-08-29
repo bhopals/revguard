@@ -3,8 +3,8 @@
 This is the "explain the whole thing" document. It assumes no prior context
 and walks from the idea, through every file, to a step-by-step trace of what
 happens when you run a review. If you only read one doc to understand the
-project, read this one. For hands-on commands to run it live, see
-[DEMO.md](DEMO.md).
+project, read this one. For hands-on commands, see the Makefile targets
+(`make validate`, `make agent`, `make eval`) and [REPRODUCTION.md](REPRODUCTION.md).
 
 ---
 
@@ -152,8 +152,6 @@ guards). Output lands in `reviews/`.
 - `README.md` — the pitch: user, bottleneck, results, how to run.
 - `docs/CHANGELOG.md` — the **honest iteration story**, every version measured.
 - `docs/REPRODUCTION.md` — clean-environment steps and exact commands.
-- `docs/VIDEO_SCRIPT.md` — the ≤5-minute video script.
-- `docs/SUBMISSION.md` — the submission checklist.
 - `docs/dashboard.html` — generated results dashboard.
 - `tests/test_harness.py` — self-tests for the scoring harness (`make test`).
 
@@ -250,8 +248,6 @@ Three findings, in order of importance (full tables in the
 
 ## 7. Where to go next
 
-- **Run it yourself, live:** [DEMO.md](DEMO.md) — copy-paste commands and
-  what to expect.
 - **Reproduce every number from scratch:** [REPRODUCTION.md](REPRODUCTION.md).
 - **Read the honest iteration story:** [CHANGELOG.md](CHANGELOG.md).
 - **See it on real bugs:** [../replay/README.md](../replay/README.md).
