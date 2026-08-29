@@ -1,0 +1,36 @@
+{
+  "case": "case09_report_refactor",
+  "system": "agent-v4",
+  "findings": [],
+  "rejected_findings": [],
+  "raw_finding_count": 0,
+  "merged_count": 0,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 0,
+      "seconds": 44.4,
+      "cost_usd": 0.11143639999999999
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 0,
+      "seconds": 4.3,
+      "cost_usd": 0.015456000000000001
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 0,
+      "seconds": 20.5,
+      "cost_usd": 0.0592884
+    },
+    {
+      "stage": "reviewer_nitpick",
+      "findings": 0,
+      "seconds": 9.4,
+      "cost_usd": 0.029344799999999997
+    }
+  ],
+  "seconds": 44.4,
+  "cost_usd": 0.2155
+}

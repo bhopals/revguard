@@ -1,0 +1,72 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Command-line interface for Ledgerly</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Command-line interface for Ledgerly</h1>
+<div class="sub">Adds a ledgerly CLI with register, login, add, list and summary commands so the service can be used without writing Python. Token is cached in the user&#x27;s home directory between invocations.</div>
+<span class="verdict" style="background:#e65100">Request changes — 5 confirmed finding(s), 0 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>1. Float-based cents conversion causes rounding errors and bypasses amount validation</strong>
+  <div class="loc">ledgerly/cli.py:56 &middot; correctness</div>
+  <div>cmd_add computes amount_cents with `int(float(args.amount) * 100)` instead of using the existing `utils.parse_money` helper that the rest of the codebase (and utils.py&#x27;s own docstring) treats as the canonical way to convert user-supplied amounts to integer cents. Two concrete failures: (1) Floating-point imprecision plus truncation via int() silently loses a cent for many valid inputs, e.g. `float(&#x27;2.11&#x27;) * 100 == 210.99999999999997`, so `ledgerly add 2.11 food 2026-03-01` records amount_cents=210 ($2.10) instead of 211 ($2.11) — a real money-arithmetic corruption in the ledger. (2) `parse_money` rejects zero/negative amounts (&#x27;amount must be positive&#x27;), but `float()` accepts them, so `ledgerly add -5 food 2026-03-01` succeeds and inserts an expense with amount_cents=-500, silently corrupting monthly_summary totals and budget_status calculations for that user, a validation guarantee the rest of the code assumes is enforced at input time.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read utils.py (parse_money rejects total&lt;=0 and is the documented canonical converter) and expenses.py (add_expense performs no amount validation). Ran the actual CLI end-to-end: `ledgerly add 0.29 food 2026-03-01` inserted amount_cents=28 (prints &#x27;$0.28&#x27; instead of $0.29), and `ledgerly add -5 food 2026-03-01` succeeded, inserting amount_cents=-500 despite parse_money&#x27;s positive-amount guarantee. Also brute-forced all cent values 1-9999 through int(float(f&#x27;{c/100:.2f}&#x27;)*100): 573/9999 (~5.7%) round incorrectly, confirming this is systemic, not a cherry-picked edge case. Note: the reviewer&#x27;s s</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>2. Session token written to disk before permissions are restricted (TOCTOU)</strong>
+  <div class="loc">ledgerly/cli.py:32 &middot; security</div>
+  <div>_save_token() calls TOKEN_PATH.write_text(token) which creates/overwrites ~/.ledgerly_token using the process&#x27;s default umask (commonly 0644, world/group-readable) and only restricts it to 0600 afterward on line 33. Between the write and the chmod, and on any platform/filesystem where the chmod call fails or is delayed, the plaintext bearer token is readable by other local users. On a shared multi-user machine, a local attacker who reads the file during this window (or via a race with a symlink they can plant at that path before it exists) obtains a valid 24h session token and can impersonate the victim against the Ledgerly service. The token should be created with mode 0600 atomically (e.g. via os.open(path, O_CREAT|O_WRONLY|O_TRUNC, 0o600) then writing to the resulting fd) rather than create-then-chmod.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/cli.py lines 31-33, matching the diff exactly: _save_token() calls TOKEN_PATH.write_text(token) followed by TOKEN_PATH.chmod(0o600), with no umask override or atomic-create-with-mode anywhere in the repo (grep confirmed no other use of os.open/umask). Reproduced empirically with python3: under a typical umask of 0o22, write_text() creates the file with mode 0o644 (world-readable) and it remains so until the separate chmod(0o600) call executes afterward, confirming a genuine non-atomic create-then-restrict window during which a local user on a shared machine could read the plainte</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>3. Passwords accepted as plaintext CLI positional arguments</strong>
+  <div class="loc">ledgerly/cli.py:91 &middot; security</div>
+  <div>The &#x27;register&#x27; and &#x27;login&#x27; subcommands (lines 90-91 and 95-96) take the password as a plain positional argv argument, e.g. `ledgerly login alice mypassword`. On multi-user systems this exposes the plaintext password to any local user via `ps`/`/proc/&lt;pid&gt;/cmdline` while the process is running, and it gets persisted in the user&#x27;s shell history file. This is a direct behavior introduced by this PR&#x27;s CLI design and leaks credentials that the rest of the codebase otherwise protects with PBKDF2 hashing and constant-time comparison. Passwords should be read from an interactive prompt (e.g. getpass) or an environment variable/file, not passed as a visible command-line argument.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/cli.py lines 89-97: add_reg.add_argument(&#x27;password&#x27;) and add_login.add_argument(&#x27;password&#x27;) are added as positional arguments (no nargs=&#x27;?&#x27; with getpass fallback, no --password-file or env var alternative). This matches the diff exactly. Running `python -m ledgerly.cli login alice mypassword` places the plaintext password directly in argv, which is visible via `ps aux`, `/proc/&lt;pid&gt;/cmdline` on Linux, and gets recorded in shell history (e.g. ~/.bash_history) since it&#x27;s typed as a literal command-line token. Grepping the rest of cli.py confirms no getpass, no env var reading for c</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>4. main() always returns 0, masking command failures from callers</strong>
+  <div class="loc">ledgerly/cli.py:127 &middot; robustness</div>
+  <div>`main` catches every exception, prints an &#x27;error: ...&#x27; message, and then unconditionally `return 0` regardless of whether `args.func(db, args)` raised. Any script or CI job invoking `python -m ledgerly.cli ...` (e.g. `add` with an invalid category, or `list`/`summary` when not logged in) will see exit code 0 even though the operation failed, making failures invisible to automation despite an error being printed to stderr. The exception branch should set a non-zero exit status that `main` returns.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/cli.py:118-127, matches diff exactly: main() catches all exceptions, prints to stderr, then unconditionally `return 0` (no exit-code variable set in except branch). Reproduced live: ran `LEDGERLY_DB=/tmp/test_ledgerly.db python3 -m ledgerly.cli list` with no token file present; it printed &#x27;error: not logged in; run: ledgerly login &lt;user&gt; &lt;password&gt;&#x27; to stderr but exited with code 0, confirming that automation/CI checking $? would see success despite the failed command.</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#8d6e63">MINOR</span>
+  <strong>5. No tests added for new CLI module; failure-path exit code untested</strong>
+  <div class="loc">ledgerly/cli.py:118 &middot; test-adequacy</div>
+  <div>This PR introduces an entirely new module (ledgerly/cli.py) with argument parsing, token file caching, and five subcommands, but tests/test_ledgerly.py is unmodified — there is no test exercising main(), any cmd_* handler, or the token cache helpers. In particular, main() (line 118-127) catches all exceptions and always `return 0`, meaning failed commands (e.g. running `add` without logging in, or `login` with a wrong password) print an error but report success to the shell. A test invoking main() with a failing command and asserting on the return code, or asserting _save_token/_load_token round-trip through the home-directory file, would have caught this silent-failure behavior; as written, nothing in the test suite would fail if the exit-code handling or token caching were broken or removed.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/cli.py: main() wraps args.func(db, args) in try/except Exception, prints to stderr, and unconditionally `return 0` (no exit-code propagation on failure). Confirmed tests/test_ledgerly.py contains zero references to `cli` (grep -n &quot;cli&quot; returned nothing) and no test_cli*.py file exists anywhere in the repo. Reproduced the failure path directly: ran `main([&#x27;add&#x27;, &#x27;10.00&#x27;, &#x27;food&#x27;, &#x27;2026-01-01&#x27;])` in a fresh HOME with no cached token — it printed &#x27;error: not logged in; run: ledgerly login &lt;user&gt; &lt;password&gt;&#x27; to stderr but returned 0. This confirms the described silent-failure behavior</div>
+</div>
+<footer>Pipeline: reviewer_correctness (1) &rarr; reviewer_security (2) &rarr; reviewer_tests (1) &rarr; reviewer_nitpick (3) &rarr; verifier (5) &middot; 91.9s &middot;
+$0.63 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

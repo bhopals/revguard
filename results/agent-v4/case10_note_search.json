@@ -1,0 +1,73 @@
+{
+  "case": "case10_note_search",
+  "system": "agent-v4",
+  "findings": [
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 68,
+      "category": "security",
+      "severity": "critical",
+      "title": "SQL injection via unvalidated `sort` column parameter",
+      "description": "The `sort` argument is interpolated directly into the SQL string with an f-string (`f\" ORDER BY {sort} DESC\"`) without any allow-list validation or parameterization. If `search_expenses` is reachable with caller-controlled input (e.g., a `sort` query parameter from an API endpoint), an attacker can pass a value like `1; DROP TABLE expenses;--` or, more relevantly for SQLite, a subquery/UNION-style expression (SQLite permits expressions in ORDER BY, e.g. `(SELECT password FROM users LIMIT 1)`) to exfiltrate data from other tables or corrupt the database. This is a classic SQL injection via an unvalidated ORDER BY clause, and it's the exact pattern the codebase avoids elsewhere via parameterized `?` placeholders.",
+      "reviewer": "security",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/expenses.py: search_expenses() builds `sql += f\" ORDER BY {sort} DESC\"` with the caller-supplied `sort` parameter interpolated directly, no allow-list/validation anywhere in the file or codebase (grepped for any sort validation, found none). Wrote and ran a live exploit against the actual Database class: inserted a `users` row with password_hash 'SUPERSECRETHASH', then called search_expenses(db, 1, '', sort=\"(CASE WHEN (SELECT substr(password_hash,1,1) FROM users LIMIT 1)='S' THEN id ELSE -id END)\") vs the same with a wrong guess 'X'. The row ordering flipped between [2,1] and [1,2] depending on the guess, proving a working blind boolean-based SQL injection oracle capable of exfiltrating data from arbitrary tables via the unvalidated ORDER BY clause. Confirmed sqlite3's execute() blocks stacked statements (DROP TABLE via ';' failed), so the more severe destructive-write claim in the description is overstated, but the core claim (unvalidated interpolation enabling data exfiltration from other tables) is verified and reproducible.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 63,
+      "category": "correctness",
+      "title": "search_expenses has no pagination/limit unlike list_expenses",
+      "severity": "minor",
+      "description": "Every other listing helper in this module (`list_expenses`) enforces `PAGE_SIZE` via LIMIT/OFFSET to bound result size and matches the module's paging conventions, but `search_expenses` returns every matching row unbounded. A user with many matching notes (or a broad `text` value like a single common character) gets the entire table back in one call, inconsistent with the established pattern in this file and a likely performance/memory issue as data grows.",
+      "reviewer": "nitpick",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/expenses.py: search_expenses (lines 63-70) builds 'SELECT * FROM expenses WHERE user_id = ? AND note LIKE ? ORDER BY {sort} DESC' with no LIMIT/OFFSET, unlike list_expenses which appends 'LIMIT ? OFFSET ?' with PAGE_SIZE=20. Grepped the codebase for other callers/wrappers of search_expenses and found none, and db.query()/Database.query() (ledgerly/db.py) applies no default row cap (plain cur.fetchall()). Executed a reproduction: inserted 100 matching expense rows via add_expense and called search_expenses(db, 1, 'coffee') vs list_expenses(db, 1) \u2014 search_expenses returned all 100 rows while list_expenses returned exactly PAGE_SIZE=20. This confirms the function returns every matching row unbounded, inconsistent with the module's paging convention.",
+        "adjusted_severity": "minor"
+      }
+    }
+  ],
+  "rejected_findings": [],
+  "raw_finding_count": 6,
+  "merged_count": 2,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 1,
+      "seconds": 27.3,
+      "cost_usd": 0.0496168
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 1,
+      "seconds": 10.2,
+      "cost_usd": 0.0253124
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 1,
+      "seconds": 39.8,
+      "cost_usd": 0.10899519999999999
+    },
+    {
+      "stage": "reviewer_nitpick",
+      "findings": 3,
+      "seconds": 29.4,
+      "cost_usd": 0.0488038
+    },
+    {
+      "stage": "verifier",
+      "in": 2,
+      "confirmed": 2,
+      "seconds": 95.0
+    }
+  ],
+  "seconds": 134.8,
+  "cost_usd": 0.4507
+}

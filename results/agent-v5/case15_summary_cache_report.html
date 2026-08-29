@@ -1,0 +1,58 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Cache monthly summaries</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Cache monthly summaries</h1>
+<div class="sub">monthly_summary is the hottest query in the dashboard, so cache its result per (user, month). Includes a test showing the cache returns consistent results.</div>
+<span class="verdict" style="background:#c62828">Request changes — 3 confirmed finding(s), 1 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. Cache is never invalidated when expenses/budgets change, returning stale monthly totals</strong>
+  <div class="loc">ledgerly/reports.py:32 &middot; correctness</div>
+  <div>monthly_summary caches results in the module-level _summary_cache keyed by (user_id, month) but nothing clears or updates that entry when the underlying data changes: add_expense, delete_expense (ledgerly/expenses.py) and set_budget (ledgerly/reports.py:10) never touch _summary_cache. Concrete scenario: the dashboard calls monthly_summary(db, user, &#x27;2026-05&#x27;) once (e.g. before any expenses exist, caching {}); the user then adds an expense for May via add_expense; the dashboard reloads and calls monthly_summary(db, user, &#x27;2026-05&#x27;) again — because the key is already cached, the new expense is silently omitted from the totals returned, and any budget_status() call for that month (reports.py:52) will also report the wrong &#x27;spent&#x27;/&#x27;remaining&#x27;/&#x27;over_budget&#x27; values. This directly contradicts the docstring&#x27;s premise that the cache exists because &#x27;numbers rarely change within a session&#x27; — no invalidation path is provided for when they do change, so any edit produces permanently wrong cached output for the rest of the process lifetime.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/reports.py and expenses.py: _summary_cache is a module-level dict written to on every monthly_summary call, and grep confirms no other code (set_budget, add_expense, delete_expense) ever touches _summary_cache. Reproduced live: called monthly_summary(db, user, &#x27;2026-05&#x27;) before any expenses (cached {}), then added an expense via add_expense for that same month, then called monthly_summary again in the same process — output was still {} instead of reflecting the new $10.00 food expense, proving the stale-cache bug is real and reachable. The PR&#x27;s own added test (test_summary_cache_</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>2. Process-global cache keyed only by (user_id, month), not scoped to the db/tenant instance</strong>
+  <div class="loc">ledgerly/reports.py:22 &middot; security</div>
+  <div>`_summary_cache` is a module-level dict shared by every caller in the process, and its key is `(user_id, month)` — it does not incorporate any identifier of which `Database` instance (i.e. which tenant/session/store) the data came from. `user_id` is an autoincrementing integer that restarts at 1 for every fresh `Database()` (see the `db` fixture in tests/test_ledgerly.py, which constructs a new `Database()` per test and whose first registered user always gets id 1). In any deployment where the application creates more than one `Database` instance in the same process — e.g. per-tenant SQLite files, multiple app instances imported into one worker, or simply two independent user sessions being served by workers that share this module — a call to `monthly_summary(db_A, 1, &#x27;2026-05&#x27;)` will populate the cache under key `(1, &#x27;2026-05&#x27;)`, and a later call `monthly_summary(db_B, 1, &#x27;2026-05&#x27;)` for a completely different user/tenant with id 1 will return the first tenant&#x27;s cached financial totals instead of querying db_B. This is a cross-user/cross-tenant data disclosure: user B sees user A&#x27;s spend-by-category summary. Every other function in this module and in expenses.py scopes all queries by `user_id` against the specific `db` passed in; this cache silently breaks that scoping by ignoring the db argument entirely when serving a cache hit.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/reports.py: module-level `_summary_cache = {}` keyed by `(user_id, month)` only, with no reference to `db`. Reproduced the exact scenario described: created two separate `Database()` instances (db_a, db_b), registered a first user in each (both got id=1, confirming users.id autoincrements independently per Database instance), added a &#x27;health&#x27; expense of $1000 for user_a and a &#x27;food&#x27; expense of $5 for user_b in May 2026. Calling `reports.monthly_summary(db_a, 1, &#x27;2026-05&#x27;)` then `reports.monthly_summary(db_b, 1, &#x27;2026-05&#x27;)` returned identical results `{&#x27;health&#x27;: 100000}` for both </div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>3. Cache test never writes between reads, so it cannot detect staleness</strong>
+  <div class="loc">tests/test_ledgerly.py:109 &middot; test-adequacy</div>
+  <div>test_summary_cache_consistent adds one expense, then calls monthly_summary(db, user, &quot;2026-05&quot;) twice with no mutation between the two calls. Since no expense is added, deleted, or updated between the calls, the assertion first == second would pass identically whether or not any caching exists at all — it is not possible for this test to fail due to a caching bug. The real risk introduced by the cache in reports.py:22-43 is staleness: if a new expense is added (or an existing one deleted/updated) after the first monthly_summary call for a given (user_id, month), the second call still returns the cached totals dict instead of reflecting the change, because there is no invalidation logic anywhere in the diff. A test that adds a second expense between the two monthly_summary calls and asserts the second call reflects the updated total would fail against the current implementation, but this test avoids that scenario entirely and thus gives false confidence that the cache is &#x27;consistent&#x27; in the sense of being correct, when it only demonstrates that repeated calls with no state change return the same value.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Ran reports.monthly_summary against a live Database/expenses setup: after caching, adding a new expense in the same (user, month) after the first call still yields the stale cached totals on the second call (staleness bug reproduced live: second call returned {&#x27;transport&#x27;: 700} even after a new &#x27;food&#x27; expense was added). Then reproduced the exact assertions of test_summary_cache_consistent using a hand-written monthly_summary_no_cache with zero caching logic whatsoever — the test body passed identically, proving the test as written cannot distinguish a correct cache from a broken/no-op one, si</div>
+</div>
+<footer>Pipeline: reviewer_correctness (3) &rarr; reviewer_security (2) &rarr; reviewer_tests (1) &rarr; verifier (3) &middot; 119.1s &middot;
+$0.55 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

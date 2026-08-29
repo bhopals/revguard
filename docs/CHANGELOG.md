@@ -56,28 +56,59 @@ More findings without a filter = worse precision. Both fixes are in v5.
 ## Iteration 3 (v3) — v2 + adversarial verifier
 
 Every finding goes to a separate agent, in a fresh sandbox with Bash,
-instructed to falsify it by execution. <!-- V3_RESULT -->
+instructed to falsify it by execution. **F1 0.743 (recall 0.712 /
+precision 0.778)** on all 22 cases — barely moved from v2, at twice the
+latency and cost.
 
-**Learning:** the verifier confirmed 29/29 findings from the conservative
-reviewers — zero rejections. A precision stage is useless when the
-upstream is already starved down to only-safe findings. The layering was
-backwards: reviewers were doing the verifier's job (filtering) instead of
-their own (finding).
+**Learning:** the verifier confirmed **54 of 54** findings — zero
+rejections — for two distinct reasons we only separated by reading its
+trajectories. (1) *Starvation:* conservative reviewers had already
+filtered themselves, so there were few wrong claims to kill. (2) *Rubber
+stamping:* the false positives it did receive were advisory comments
+("no tests cover X") that are factually TRUE — the verifier checked
+truth, and truth is the wrong gate for advice. A verification stage
+needs a policy gate as well as a truth gate. Both fixes landed in v5.
 
 ## Iteration 4 (v4) — the experiment we removed: a nitpick reviewer
 
 Added a fourth "code quality" reviewer (naming, docstrings, duplication)
-to test whether more coverage helps. <!-- V4_RESULT -->
+expecting it to add noise and prove the value of narrow lanes. It did the
+opposite: **F1 0.829 (recall 0.864 / precision 0.797)** vs v3's 0.743.
+Attribution (findings carry their reviewer's name, so this is exact): the
+nitpick lane produced 15 true findings and 6 false positives, and **11
+defects that no specialist caught** — v4 minus its nitpick findings
+scores F1 0.755.
 
-**Decision: removed.** <!-- V4_DECISION -->
+**Decision: removed anyway — but for the right reason.** The nitpick
+lane's edge wasn't taste in naming; it was its *permissive brief*. The
+specialists were told to self-censor ("only what you'd block a merge on")
+while nitpick was told to report anything worth a comment — so nitpick
+kept catching real defects the specialists talked themselves out of. Its
+false positives, meanwhile, were exactly the style noise we feared. So we
+removed the lane and transplanted its permissiveness into the specialist
+briefs (v5's recall calibration). The experiment's lesson: **calibration,
+not specialization, was the binding constraint.**
 
 ## Iteration 5 (v5, final) — recall-tuned reviewers + verifier
 
-The measurement-driven redesign: reviewers are explicitly told a
-verification stage sits downstream and to optimize for recall within
-their lane (real defects only — no style, no advisory comments);
-the correctness lane now owns robustness; prompts are versioned
-(`reviewer_common_v2.md`) so v1–v4 remain reproducible.
+The measurement-driven redesign, three changes at once, each answering a
+measured failure:
+
+1. **Recall-tuned reviewers** (`reviewer_common_v2.md`): reviewers are
+   told a verification stage sits downstream and to optimize for recall
+   within their lane — answers v1's conservative-calibration collapse.
+2. **Robustness has an owner**: the correctness lane's brief now
+   explicitly covers validation regressions, swallowed exceptions,
+   durability, unbounded growth — answers v2's between-the-chairs misses.
+3. **Policy-gated verifier** (`verifier_v2.md`): v3's verifier confirmed
+   54/54 findings including every false positive, because the FPs were
+   *factually true* advisory comments ("there is indeed no test for X") —
+   it checked truth but never whether a true observation is a blocking
+   defect. The v2 verifier gates on both: truth (attack by execution) AND
+   policy (advice is rejected even when true). The tests specialist also
+   gets a hard ban on coverage-advisory findings (defense in depth).
+
+All prompts are versioned; v1–v4 remain reproducible byte-for-byte.
 <!-- V5_RESULT -->
 
 ## Adjudication passes (label corrections, applied to all systems)

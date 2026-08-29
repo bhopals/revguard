@@ -1,0 +1,88 @@
+{
+  "case": "case14_multi_currency",
+  "system": "agent-v4",
+  "findings": [
+    {
+      "file": "ledgerly/reports.py",
+      "line": 25,
+      "category": "correctness",
+      "severity": "critical",
+      "title": "monthly_summary sums amount_cents across different currencies as if they were the same unit",
+      "description": "Before this PR every expense was implicitly USD, so SUM(amount_cents) was a valid total. This PR adds a `currency` column and lets `add_expense` insert expenses in any currency (e.g. EUR, JPY), but `monthly_summary` (used directly and via `budget_status`) still does `SUM(amount_cents) ... GROUP BY category` with no `currency` filter or conversion. For a user who logs 1000 cents in USD and 1000 cents in EUR for 'food' in the same month, the summary reports 2000 as the category total, silently treating unlike currencies as equal. `budget_status` then compares this nonsensical mixed-currency total against a USD `limit_cents`, producing wrong `spent`/`remaining`/`over_budget` values (e.g. flagging a user as over/under budget incorrectly). The PR description claims 'Reporting is unchanged', but by introducing multi-currency data it exposes reporting as now financially incorrect for any user with non-USD expenses, and no test covers this scenario.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/reports.py: monthly_summary does `SUM(amount_cents) ... GROUP BY category` with no currency filter/grouping, and budget_status compares that raw sum against a single limit_cents. Grepped the whole repo for 'currency' and found it's only used for storage/roundtrip (db.py, expenses.py, and a roundtrip test) \u2014 no conversion or currency-aware filtering exists anywhere. Reproduced live: added a $10 USD and a \u20ac10 EUR expense to category 'food' in the same month, then called monthly_summary -> {'food': 2000}, and budget_status against a $15 limit -> spent '$20.00', remaining '-$5.00', over_budget True \u2014 incorrectly flagging over-budget based on a nonsensical mixed-currency sum. Confirms the exact scenario described in the finding.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 18,
+      "category": "correctness",
+      "severity": "minor",
+      "title": "currency parameter accepts and stores any unvalidated string",
+      "description": "`add_expense` validates `category` against `VALID_CATEGORIES` but performs no validation on the new `currency` argument (no whitelist, no case normalization, no format check), and the DB schema has no CHECK constraint either. Callers can pass an empty string, lowercase codes like 'usd', or arbitrary garbage (e.g. 'US Dollar', '123'), which is stored verbatim in the `currency` column. This produces inconsistent data (e.g. 'USD' vs 'usd' treated as distinct currencies by any downstream grouping/reporting) and no error is raised for clearly invalid input, unlike the analogous `category` check the PR left untouched.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read expenses.py: add_expense validates category against VALID_CATEGORIES but has no equivalent check for the new currency parameter. Grepped db.py schema: currency column has no CHECK constraint, just DEFAULT 'USD'. Ran a live repro against an in-memory Database: add_expense(db, 1, 500, 'food', '2026-03-01', currency='garbage 123 !!!') succeeded and stored 'garbage 123 !!!' verbatim; currency='' stored as empty string; currency='usd' stored as lowercase 'usd' (distinct from 'USD'). Confirms no whitelist, no case normalization, and no format/empty check exists anywhere on the currency code path.",
+        "adjusted_severity": "minor"
+      }
+    },
+    {
+      "file": "tests/test_ledgerly.py",
+      "line": 82,
+      "category": "test-adequacy",
+      "severity": "minor",
+      "title": "new currency test only covers the happy path",
+      "description": "test_currency_roundtrip only checks that an explicitly-supplied uppercase currency ('EUR') is stored and read back. There is no test asserting the default 'USD' is actually persisted when the currency argument is omitted, and no test for rejection/normalization of invalid or lowercase currency input, so the absence of validation noted in expenses.py is not caught by the suite.",
+      "reviewer": "nitpick",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read expenses.py/db.py: no validation or normalization of the currency parameter anywhere in the code path. Only one new test, test_currency_roundtrip (line 82-87), exists and it only passes currency='EUR' (uppercase, valid) and checks roundtrip. Ran a live repro: add_expense with no currency arg stores 'USD' (untested by suite), currency='eur' is stored verbatim as lowercase 'eur', and currency='NOTREAL' is stored verbatim as 'NOTREAL' \u2014 confirming both the missing validation and the missing test coverage for default/invalid/lowercase cases exactly as described.",
+        "adjusted_severity": "minor"
+      }
+    }
+  ],
+  "rejected_findings": [],
+  "raw_finding_count": 6,
+  "merged_count": 3,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 2,
+      "seconds": 41.5,
+      "cost_usd": 0.0985276
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 0,
+      "seconds": 15.2,
+      "cost_usd": 0.046230999999999994
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 1,
+      "seconds": 30.7,
+      "cost_usd": 0.062112600000000004
+    },
+    {
+      "stage": "reviewer_nitpick",
+      "findings": 3,
+      "seconds": 64.7,
+      "cost_usd": 0.120819
+    },
+    {
+      "stage": "verifier",
+      "in": 3,
+      "confirmed": 3,
+      "seconds": 37.7
+    }
+  ],
+  "seconds": 102.4,
+  "cost_usd": 0.5348
+}

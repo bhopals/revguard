@@ -1,0 +1,67 @@
+{
+  "case": "case16_top_categories",
+  "system": "agent-v5",
+  "findings": [
+    {
+      "file": "ledgerly/reports.py",
+      "line": 65,
+      "category": "correctness",
+      "severity": "critical",
+      "title": "Categories ranked by string comparison of formatted money, not numeric amount",
+      "description": "The sort key is `format_money(kv[1])`, a string like \"$95.00\" or \"$100.00\", compared lexicographically instead of comparing the underlying integer cents. Lexicographic string ordering does not match numeric ordering once dollar amounts have different digit counts: e.g. a category with 9500 cents (\"$95.00\") sorts ahead of one with 10000 cents (\"$100.00\") when reverse=True, because '9' > '1' as the first character, even though $100 is the larger spend. This produces an incorrectly ordered 'top N' list whenever such digit-length crossovers occur among a user's category totals, which is a core correctness failure for a function whose entire purpose is ranking by spend.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/reports.py:65 \u2014 sort key is `format_money(kv[1])`, a string. Read format_money (ledgerly/utils.py:31-35): no zero-padding, e.g. 9500 -> '$95.00', 10000 -> '$100.00'. Directly reproduced: sorted([9500,10000], key=format_money, reverse=True) == [9500, 10000] (wrong order, since '9'>'1' lexicographically). Also monkeypatched monthly_summary to return {'Dining':9500,'Rent':10000,'Groceries':3000} and called top_categories: output ranked Dining ($95) and Groceries ($30) ahead of Rent ($100), the actual top spender, confirming the ranking bug is reachable through the real function, not just a contrived key comparison.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 60,
+      "category": "correctness",
+      "severity": "minor",
+      "title": "Docstring/PR promise of alphabetical tie-breaking is not implemented",
+      "description": "The docstring and PR description state 'Ties are broken alphabetically', but the sort key only ever uses `format_money(kv[1])` (the amount) \u2014 category name is never used as a tie-breaker. Python's sort is stable, so equal-amount categories retain whatever order they had in `spend.items()`, which comes from `monthly_summary`'s SQL query ordered by `total DESC` (SQLite's tie order for equal totals is unspecified/insertion-order based), not alphabetical order. Two categories with the same monthly total (e.g. both $50.00) will be rendered in an arbitrary, non-alphabetical order, contradicting the documented and PR-promised stable-alphabetical tie-break behavior relied on for stable widget rendering.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/reports.py:59-71: sort key is `lambda kv: format_money(kv[1])` \u2014 only the formatted amount, never the category name (kv[0]), so ties cannot be broken alphabetically. Reproduced with an in-memory DB: inserted three categories ('Zoo', 'Mango', 'Apple') each totaling $50.00, inserted in that non-alphabetical order. `top_categories()` returned them as [Zoo, Mango, Apple] \u2014 pure insertion/SQL order, not alphabetical ([Apple, Mango, Zoo] as docstring/PR claim). No test in tests/test_ledgerly.py covers top_categories or this tie-break claim, so nothing masks the bug. This directly contradicts the explicit docstring promise 'Ties are broken alphabetically' and the PR description's identical claim \u2014 a genuine functional gap between documented/promised behavior and actual code, not a missing-test complaint.",
+        "adjusted_severity": "minor"
+      }
+    }
+  ],
+  "rejected_findings": [],
+  "raw_finding_count": 2,
+  "merged_count": 2,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 2,
+      "seconds": 39.6,
+      "cost_usd": 0.0683816
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 0,
+      "seconds": 16.5,
+      "cost_usd": 0.037617399999999995
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 0,
+      "seconds": 21.2,
+      "cost_usd": 0.0491474
+    },
+    {
+      "stage": "verifier",
+      "in": 2,
+      "confirmed": 2,
+      "seconds": 38.0
+    }
+  ],
+  "seconds": 77.6,
+  "cost_usd": 0.2922
+}

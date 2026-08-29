@@ -1,0 +1,51 @@
+{
+  "case": "case08_bulk_import",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 81,
+      "category": "robustness",
+      "title": "Overly broad exception handling silently swallows all errors, not just validation failures",
+      "description": "`except Exception: pass` catches everything, including database errors (e.g. connection loss, lock timeouts), programming bugs, and unexpected exceptions from `add_expense`, not just row-validation failures as the PR description claims. Real failures (e.g. a bug that breaks every row, or a DB outage partway through the import) are silently treated the same as a single bad row, with no logging, so operators have no way to detect or diagnose systemic problems from a low `count` return value."
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 63,
+      "category": "robustness",
+      "title": "No transaction/atomicity for the bulk import",
+      "description": "Each row is inserted via a separate `add_expense` call with no surrounding transaction. If `add_expense` commits per call, a large import performs one commit per row (poor performance/lock contention for bulk data), and if the process is interrupted partway (e.g. crash, timeout) the import is left half-applied with no rollback and no way to resume or know how far it got."
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 63,
+      "category": "robustness",
+      "title": "No feedback about which rows were skipped or why",
+      "description": "The function only returns a count of successfully imported rows. Callers have no way to know which rows failed or why, making it impossible for a user migrating data to fix and re-submit only the bad rows, and making silent data loss (rows silently dropped) likely to go unnoticed."
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 70,
+      "category": "security",
+      "title": "Unbounded row processing enables resource-exhaustion DoS",
+      "description": "`rows` is iterated with no upper bound on size. A large CSV/JSON upload (accidental or malicious) can cause an extremely long-running, memory- and lock-intensive request with no batching, chunking, or limit, risking denial of service on the shared sqlite database/process."
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 63,
+      "category": "correctness",
+      "title": "No deduplication/idempotency for retried imports",
+      "description": "If a client retries an upload (e.g. after a partial failure or network timeout) there is no idempotency key or duplicate check, so previously-imported rows will be re-inserted as new expenses, corrupting the user's expense totals."
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 63,
+      "category": "test-adequacy",
+      "title": "No tests added for import_expenses",
+      "description": "The diff introduces a new public function handling untrusted, user-uploaded data with multiple edge cases (missing keys, invalid types, empty list, partial failures, duplicate rows) but adds no unit tests to verify the skip-on-invalid-row behavior, the returned count, or that valid rows are actually persisted correctly."
+    }
+  ],
+  "seconds": 48.4,
+  "cost_usd": 0.0521698,
+  "num_turns": 1
+}

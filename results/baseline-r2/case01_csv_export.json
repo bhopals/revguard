@@ -1,0 +1,65 @@
+{
+  "case": "case01_csv_export",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/export.py",
+      "line": 16,
+      "category": "security",
+      "title": "SQL injection via category filter",
+      "severity": "critical",
+      "description": "The category parameter is interpolated directly into the SQL string with an f-string instead of being passed as a bound parameter. A caller-supplied category value like \"' OR '1'='1\" or containing a UNION SELECT can alter the query logic or exfiltrate data from other tables/users."
+    },
+    {
+      "file": "ledgerly/export.py",
+      "line": 12,
+      "category": "security",
+      "title": "Path traversal via caller-supplied filename",
+      "severity": "critical",
+      "description": "filename is joined with os.path.join(EXPORT_DIR, filename) without sanitization. A filename such as \"../../etc/cron.d/evil\" or an absolute path (os.path.join discards the base if filename is absolute) lets the caller write the CSV to an arbitrary location on the filesystem, enabling file overwrite outside the intended exports directory."
+    },
+    {
+      "file": "ledgerly/export.py",
+      "line": 9,
+      "category": "correctness",
+      "title": "No authorization check that user_id matches requesting user",
+      "severity": "major",
+      "description": "The function trusts the passed-in user_id with no verification that it corresponds to the caller/session performing the export, so if invoked with a user-controlled id, an attacker could export another user's expense data (IDOR)."
+    },
+    {
+      "file": "ledgerly/export.py",
+      "line": 27,
+      "category": "robustness",
+      "title": "Unhandled None/invalid amount_cents",
+      "severity": "minor",
+      "description": "r['amount_cents'] / 100 will raise a TypeError if amount_cents is NULL/None in the database, crashing the export instead of producing a row with an empty or zero amount."
+    },
+    {
+      "file": "ledgerly/export.py",
+      "line": 25,
+      "category": "security",
+      "title": "Potential CSV/formula injection in exported fields",
+      "severity": "minor",
+      "description": "Note/category values are written to CSV unescaped; if a value begins with =, +, -, or @, opening the exported file in Excel/Sheets can trigger formula execution (CSV injection) when the export is later opened by the user."
+    },
+    {
+      "file": "ledgerly/export.py",
+      "line": 12,
+      "category": "robustness",
+      "title": "Existing file silently overwritten",
+      "severity": "minor",
+      "description": "Opening the target path with mode 'w' silently overwrites any pre-existing file at that path with no check or warning, which combined with the path traversal issue increases the risk of accidental or malicious data loss."
+    },
+    {
+      "file": "ledgerly/export.py",
+      "line": 9,
+      "category": "test-adequacy",
+      "title": "No tests added for new export functionality",
+      "severity": "major",
+      "description": "The PR introduces a new module with SQL construction, filesystem I/O, and filtering logic, but includes no unit tests covering the category filter, CSV formatting, empty result sets, or the newly introduced injection/path-traversal risks."
+    }
+  ],
+  "seconds": 19.3,
+  "cost_usd": 0.024433800000000002,
+  "num_turns": 1
+}

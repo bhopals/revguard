@@ -1,0 +1,30 @@
+{
+  "case": "case05_new_categories",
+  "system": "agent-v5",
+  "findings": [],
+  "rejected_findings": [],
+  "raw_finding_count": 0,
+  "merged_count": 0,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 0,
+      "seconds": 27.6,
+      "cost_usd": 0.0825678
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 0,
+      "seconds": 11.8,
+      "cost_usd": 0.0357084
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 0,
+      "seconds": 39.7,
+      "cost_usd": 0.1312592
+    }
+  ],
+  "seconds": 39.7,
+  "cost_usd": 0.2495
+}

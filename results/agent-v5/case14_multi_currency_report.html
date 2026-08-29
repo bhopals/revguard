@@ -1,0 +1,58 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Multi-currency expenses</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Multi-currency expenses</h1>
+<div class="sub">Lets users record expenses in a currency other than USD. Adds a currency column (default USD) and a currency parameter to add_expense, with a test covering the new parameter. Reporting is unchanged.</div>
+<span class="verdict" style="background:#e65100">Request changes — 3 confirmed finding(s), 0 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>1. monthly_summary sums amount_cents across mixed currencies as if they were all the same currency</strong>
+  <div class="loc">ledgerly/reports.py:25 &middot; correctness</div>
+  <div>add_expense now lets callers store expenses in any currency (e.g. EUR, GBP) via the new currency column, but monthly_summary does `SELECT category, SUM(amount_cents) ... GROUP BY category` with no filter or conversion by currency. If a user records 500 cents USD and 900 cents EUR in the same category/month, the query returns total=1400, which is neither a valid USD nor EUR amount. budget_status (reports.py:40-56) then feeds this tainted total into format_money (which always renders a &#x27;$&#x27; prefix) and into the over_budget comparison against limit_cents (assumed USD), producing a nonsensical dollar figure and a potentially wrong over/under-budget flag. The PR description states &#x27;Reporting is unchanged,&#x27; but by introducing per-row currencies without updating reporting, it silently converts previously-correct USD totals into meaningless mixed-currency sums as soon as any non-USD expense exists.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/reports.py: monthly_summary (line 25) does SELECT category, SUM(amount_cents) GROUP BY category with no currency filter/conversion anywhere in the file or codebase (grep for &#x27;currency&#x27; in reports.py returns nothing). Reproduced live: added a 500-cent USD expense and a 900-cent EUR expense to the same category/month via expenses.add_expense (which now accepts a currency param per this PR&#x27;s diff), then called reports.monthly_summary -&gt; {&#x27;food&#x27;: 1400}, and reports.budget_status -&gt; spent formatted as &#x27;$14.00&#x27; with over_budget=True against a $10.00 limit. This confirms the exact mecha</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#8d6e63">MINOR</span>
+  <strong>2. currency parameter is stored without any validation, unlike category</strong>
+  <div class="loc">ledgerly/expenses.py:18 &middot; robustness</div>
+  <div>add_expense validates category against VALID_CATEGORIES and note length, but the new currency argument is inserted directly into the database with no checks at all (lines 18-27). Callers can pass an empty string, lowercase codes (&#x27;usd&#x27; vs &#x27;USD&#x27;), arbitrary garbage strings, or even non-string types, and the value is persisted as-is. This further fragments monthly_summary&#x27;s GROUP BY behavior (case/format variants of the same currency won&#x27;t aggregate together) and allows invalid currency codes to accumulate in the ledger with no error raised to the caller, unlike the existing category/note validation pattern this function otherwise follows.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read expenses.py: add_expense validates `category` against VALID_CATEGORIES and checks note length, but the new `currency` parameter (line 18) is passed straight into the INSERT with zero checks. Executed a reproduction against the real Database/add_expense: empty string &#x27;&#x27;, garbage &#x27;NOT_A_CURRENCY_XYZ&#x27;, lowercase &#x27;usd&#x27;, and even a non-string int 12345 were all accepted and persisted with no ExpenseError, while a bogus category value correctly raised &#x27;unknown category: not_a_category&#x27;. This confirms the core claim: currency lacks any validation unlike category. One inaccuracy in the reviewer&#x27;s</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#8d6e63">MINOR</span>
+  <strong>3. Passing currency=None raises an uncaught sqlite3.IntegrityError instead of ExpenseError</strong>
+  <div class="loc">ledgerly/expenses.py:27 &middot; robustness</div>
+  <div>The currency column is defined NOT NULL (ledgerly/db.py:22). Because add_expense performs no validation on currency before binding it into the INSERT (expenses.py:24-29), calling add_expense(db, user_id, amount, category, spent_on, currency=None) bypasses the default &#x27;USD&#x27; (defaults only apply when the argument is omitted entirely) and lets None flow straight into the parameterized INSERT, causing sqlite3 to raise a raw IntegrityError. This breaks the established convention in this function of surfacing input problems as ExpenseError, and would propagate an unexpected low-level DB exception to callers that only catch ExpenseError.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read expenses.py and db.py: add_expense validates category and note but performs no check on currency before binding it into the parameterized INSERT (expenses.py:18-29); the currency column is NOT NULL (db.py:22). Reproduced by executing: Database() + auth.register + expenses.add_expense(db, u, 500, &#x27;food&#x27;, &#x27;2026-03-01&#x27;, currency=None) — this raised sqlite3.IntegrityError: &#x27;NOT NULL constraint failed: expenses.currency&#x27; instead of expenses.ExpenseError, exactly as claimed. Grep confirms no currency validation exists anywhere in the module.</div>
+</div>
+<footer>Pipeline: reviewer_correctness (3) &rarr; reviewer_security (0) &rarr; reviewer_tests (0) &rarr; verifier (3) &middot; 122.0s &middot;
+$0.57 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

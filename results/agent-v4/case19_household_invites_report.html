@@ -1,0 +1,72 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Household invite codes</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Household invite codes</h1>
+<div class="sub">Owners can now invite people without knowing their user id: create_invite() issues a short shareable code, accept_invite() joins the caller to the household. Includes schema and tests.</div>
+<span class="verdict" style="background:#c62828">Request changes — 5 confirmed finding(s), 2 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. Invite code generated with non-cryptographic RNG</strong>
+  <div class="loc">ledgerly/household.py:91 &middot; security</div>
+  <div>create_invite() uses random.randrange (Python&#x27;s Mersenne Twister, not cryptographically secure) to generate the invite code, which functions as a bearer credential granting household membership. Mersenne Twister output is predictable if an attacker observes enough outputs, and even without that, the codespace is only 16^6 = 16,777,216 possibilities with no rate limiting on accept_invite(). An attacker can script repeated calls to accept_invite() with random/sequential 6-hex-digit codes and, within a feasible number of attempts, join arbitrary households (gaining access to their shared expenses and member list). This should use the `secrets` module (e.g. secrets.token_hex) with a materially larger code space.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/household.py: create_invite() (line 91 area) generates the invite code via random.randrange(16**6) (stdlib random, Mersenne Twister, explicitly documented as not suitable for security use), giving a codespace of 16,777,216. accept_invite() (and the rest of the codebase, confirmed via grep for rate/limit/throttle/lockout/attempt across ledgerly/) has no rate limiting, attempt counting, or lockout of any kind. Wrote a reproduction that creates a household+invite, then exhaustively iterates all 16^6 hex codes calling household.accept_invite() with no delay or blocking — it succeeded</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>2. Invite codes never expire and are never invalidated after use</strong>
+  <div class="loc">ledgerly/household.py:100 &middot; security</div>
+  <div>The invites table has a used_at column but accept_invite() (lines 100-115) never checks it or sets it, and there is no created_at/expiry check either. This means a single invite code created by an owner remains valid forever and can be redeemed by an unlimited number of different users at any time in the future — not just the one person the owner intended to invite. Combined with the small, guessable codespace (line 91), this turns invite codes into a permanent, brute-forceable backdoor into any household: once a code is guessed or leaked once, it keeps working for every subsequent attacker, and the owner has no way to revoke it. accept_invite() should mark the invite as used (UPDATE invites SET used_at = ? WHERE code = ?) and reject already-used or expired codes.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/household.py accept_invite()/create_invite() (lines 90-115): the invites row is only SELECTed by code, never UPDATEd, and used_at/created_at are never checked. Ran a live repro: created a household+invite as alice, then had bob accept the invite, then had carol accept the SAME code afterward — both succeeded and both appear as members. Grepped ledgerly/*.py for &#x27;used_at&#x27;/&#x27;expir&#x27; and found no expiry/consumption logic anywhere outside auth tokens; invites.used_at is written to schema but never referenced in code. Existing test suite (13 tests, all passing) only checks that the *sam</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>3. accept_invite bypasses the household member cap enforced by add_member</strong>
+  <div class="loc">ledgerly/household.py:108 &middot; correctness</div>
+  <div>add_member() enforces MAX_MEMBERS=12 (household.py:59) before inserting a new household_members row, but accept_invite() (household.py:100-115) performs the same insert without any count check. Since accept_invite is just another path to add a member, any owner can create_invite() and share the code with unlimited people; each accept_invite() call only checks that the accepting user isn&#x27;t already a member, never that the household is full. This silently drops the size cap the PR&#x27;s own sibling function enforces, letting a household grow past 12 members via invites.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read household.py: add_member() (lines 51-67) enforces MAX_MEMBERS=12 via a COUNT(*) check before insert, but accept_invite() (lines 100-115) only checks _member_role() for the accepting user and never checks household size before inserting into household_members. Reproduced with a live script: created a household, then looped creating invites and accepting them for 20 new users — final household_members count reached 21, exceeding MAX_MEMBERS=12, with no HouseholdError raised. Existing test suite (13 tests, all passing) has no test exercising this cap-via-invite path, confirming it&#x27;s an ungua</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>4. test_member_cannot_accept_twice does not test invite-code reuse</strong>
+  <div class="loc">tests/test_household.py:88 &middot; test-adequacy</div>
+  <div>The test name and the `used_at` column added in db.py (ledgerly/db.py:93) imply invite codes are meant to be single-use, but accept_invite() (ledgerly/household.py:100-115) never writes to used_at or otherwise invalidates the code after use. The test only re-invokes accept_invite with the *same* user (carol), which raises HouseholdError purely because carol is already a member (household.py:108-109) — a check that exists independently of any invite-consumption logic. It never exercises a second, different user attempting to redeem the already-used code. As written, this test would still pass even if create_invite/accept_invite allowed the same code to be used by unlimited different users, so it gives no coverage of the intended single-use guarantee and would not catch a regression (or the current absence of that guarantee) where one invite code lets an unbounded number of distinct users join.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/household.py: accept_invite() never writes used_at or otherwise invalidates the invite row after use; grep confirms used_at is referenced only in the db.py schema, nowhere else in ledgerly/ or tests/. Reproduced with a live script: created an invite code, had carol accept it, then had a distinct user dave accept the SAME code successfully (both appear as members afterward) — proving unlimited distinct users can redeem one invite code. The existing test_member_cannot_accept_twice only re-invokes accept_invite with the same user (carol), which fails solely due to the independent &#x27;a</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#8d6e63">MINOR</span>
+  <strong>5. invites.used_at column is dead: never written, giving a false impression that codes are single-use</strong>
+  <div class="loc">ledgerly/db.py:96 &middot; robustness</div>
+  <div>The invites table adds a `used_at TEXT` column suggesting invite codes are marked consumed after use, but neither create_invite() nor accept_invite() (ledgerly/household.py:87-115) ever sets it. Combined with the fact that accept_invite() never deletes or invalidates the row, a single invite code can be redeemed by an unlimited number of distinct users indefinitely (only the &#x27;already a member&#x27; check stops the same user from reusing it twice). The unused column is misleading to future readers/maintainers who will assume single-use semantics are enforced, and the actual multi-use behavior is undocumented in both docstrings.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/household.py: create_invite() only inserts a row (code, household_id, created_by, created_at) and accept_invite() only checks existence and membership, then inserts into household_members — neither ever touches used_at nor deletes/invalidates the invites row. Grep confirms &#x27;used_at&#x27; appears nowhere else in the codebase (only its column definition in db.py). Executed a reproduction: created a household, generated one invite code, and called accept_invite() with three different users (bob, carol, dave) — all three succeeded and joined the household using the same code, and the invi</div>
+</div>
+<footer>Pipeline: reviewer_correctness (2) &rarr; reviewer_security (2) &rarr; reviewer_tests (1) &rarr; reviewer_nitpick (3) &rarr; verifier (5) &middot; 219.2s &middot;
+$0.70 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

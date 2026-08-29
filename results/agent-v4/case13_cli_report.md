@@ -1,0 +1,45 @@
+# Code review: Command-line interface for Ledgerly
+
+> Adds a ledgerly CLI with register, login, add, list and summary commands so the service can be used without writing Python. Token is cached in the user's home directory between invocations.
+
+**Verdict: request changes.** 5 blocking finding(s), 0 critical.
+
+## 1. [MAJOR] Float-based cents conversion causes rounding errors and bypasses amount validation
+
+`ledgerly/cli.py:56` — correctness
+
+cmd_add computes amount_cents with `int(float(args.amount) * 100)` instead of using the existing `utils.parse_money` helper that the rest of the codebase (and utils.py's own docstring) treats as the canonical way to convert user-supplied amounts to integer cents. Two concrete failures: (1) Floating-point imprecision plus truncation via int() silently loses a cent for many valid inputs, e.g. `float('2.11') * 100 == 210.99999999999997`, so `ledgerly add 2.11 food 2026-03-01` records amount_cents=210 ($2.10) instead of 211 ($2.11) — a real money-arithmetic corruption in the ledger. (2) `parse_money` rejects zero/negative amounts ('amount must be positive'), but `float()` accepts them, so `ledgerly add -5 food 2026-03-01` succeeds and inserts an expense with amount_cents=-500, silently corrupting monthly_summary totals and budget_status calculations for that user, a validation guarantee the rest of the code assumes is enforced at input time.
+
+*Verified: Read utils.py (parse_money rejects total<=0 and is the documented canonical converter) and expenses.py (add_expense performs no amount validation). Ran the actual CLI end-to-end: `ledgerly add 0.29 food 2026-03-01` inserted amount_cents=28 (prints '$0.28' instead of $0.29), and `ledgerly add -5 food 2026-03-01` succeeded, inserting amount_cents=-500 despite parse_money's positive-amount guarantee. Also brute-forced all cent values 1-9999 through int(float(f'{c/100:.2f}')*100): 573/9999 (~5.7%) round incorrectly, confirming this is systemic, not a cherry-picked edge case.*
+
+## 2. [MAJOR] Session token written to disk before permissions are restricted (TOCTOU)
+
+`ledgerly/cli.py:32` — security
+
+_save_token() calls TOKEN_PATH.write_text(token) which creates/overwrites ~/.ledgerly_token using the process's default umask (commonly 0644, world/group-readable) and only restricts it to 0600 afterward on line 33. Between the write and the chmod, and on any platform/filesystem where the chmod call fails or is delayed, the plaintext bearer token is readable by other local users. On a shared multi-user machine, a local attacker who reads the file during this window (or via a race with a symlink they can plant at that path before it exists) obtains a valid 24h session token and can impersonate the victim against the Ledgerly service. The token should be created with mode 0600 atomically (e.g. via os.open(path, O_CREAT|O_WRONLY|O_TRUNC, 0o600) then writing to the resulting fd) rather than create-then-chmod.
+
+*Verified: Read ledgerly/cli.py lines 31-33, matching the diff exactly: _save_token() calls TOKEN_PATH.write_text(token) followed by TOKEN_PATH.chmod(0o600), with no umask override or atomic-create-with-mode anywhere in the repo (grep confirmed no other use of os.open/umask). Reproduced empirically with python3: under a typical umask of 0o22, write_text() creates the file with mode 0o644 (world-readable) and it remains so until the separate chmod(0o600) call executes afterward, confirming a genuine non-atomic create-then-restrict window during which a local user on a shared machine could read the plaintext session token.*
+
+## 3. [MAJOR] Passwords accepted as plaintext CLI positional arguments
+
+`ledgerly/cli.py:91` — security
+
+The 'register' and 'login' subcommands (lines 90-91 and 95-96) take the password as a plain positional argv argument, e.g. `ledgerly login alice mypassword`. On multi-user systems this exposes the plaintext password to any local user via `ps`/`/proc/<pid>/cmdline` while the process is running, and it gets persisted in the user's shell history file. This is a direct behavior introduced by this PR's CLI design and leaks credentials that the rest of the codebase otherwise protects with PBKDF2 hashing and constant-time comparison. Passwords should be read from an interactive prompt (e.g. getpass) or an environment variable/file, not passed as a visible command-line argument.
+
+*Verified: Read ledgerly/cli.py lines 89-97: add_reg.add_argument('password') and add_login.add_argument('password') are added as positional arguments (no nargs='?' with getpass fallback, no --password-file or env var alternative). This matches the diff exactly. Running `python -m ledgerly.cli login alice mypassword` places the plaintext password directly in argv, which is visible via `ps aux`, `/proc/<pid>/cmdline` on Linux, and gets recorded in shell history (e.g. ~/.bash_history) since it's typed as a literal command-line token. Grepping the rest of cli.py confirms no getpass, no env var reading for credentials, and no alternate secure input path exists anywhere in the file.*
+
+## 4. [MAJOR] main() always returns 0, masking command failures from callers
+
+`ledgerly/cli.py:127` — robustness
+
+`main` catches every exception, prints an 'error: ...' message, and then unconditionally `return 0` regardless of whether `args.func(db, args)` raised. Any script or CI job invoking `python -m ledgerly.cli ...` (e.g. `add` with an invalid category, or `list`/`summary` when not logged in) will see exit code 0 even though the operation failed, making failures invisible to automation despite an error being printed to stderr. The exception branch should set a non-zero exit status that `main` returns.
+
+*Verified: Read ledgerly/cli.py:118-127, matches diff exactly: main() catches all exceptions, prints to stderr, then unconditionally `return 0` (no exit-code variable set in except branch). Reproduced live: ran `LEDGERLY_DB=/tmp/test_ledgerly.db python3 -m ledgerly.cli list` with no token file present; it printed 'error: not logged in; run: ledgerly login <user> <password>' to stderr but exited with code 0, confirming that automation/CI checking $? would see success despite the failed command.*
+
+## 5. [MINOR] No tests added for new CLI module; failure-path exit code untested
+
+`ledgerly/cli.py:118` — test-adequacy
+
+This PR introduces an entirely new module (ledgerly/cli.py) with argument parsing, token file caching, and five subcommands, but tests/test_ledgerly.py is unmodified — there is no test exercising main(), any cmd_* handler, or the token cache helpers. In particular, main() (line 118-127) catches all exceptions and always `return 0`, meaning failed commands (e.g. running `add` without logging in, or `login` with a wrong password) print an error but report success to the shell. A test invoking main() with a failing command and asserting on the return code, or asserting _save_token/_load_token round-trip through the home-directory file, would have caught this silent-failure behavior; as written, nothing in the test suite would fail if the exit-code handling or token caching were broken or removed.
+
+*Verified: Read ledgerly/cli.py: main() wraps args.func(db, args) in try/except Exception, prints to stderr, and unconditionally `return 0` (no exit-code propagation on failure). Confirmed tests/test_ledgerly.py contains zero references to `cli` (grep -n "cli" returned nothing) and no test_cli*.py file exists anywhere in the repo. Reproduced the failure path directly: ran `main(['add', '10.00', 'food', '2026-01-01'])` in a fresh HOME with no cached token — it printed 'error: not logged in; run: ledgerly login <user> <password>' to stderr but returned 0. This confirms the described silent-failure behavior is real, reachable, and completely untested.*

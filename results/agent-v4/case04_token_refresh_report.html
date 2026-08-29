@@ -1,0 +1,51 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Sliding session expiry via token refresh</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Sliding session expiry via token refresh</h1>
+<div class="sub">Adds refresh_token() so clients can extend a session without re-entering a password. Includes a test for the new endpoint.</div>
+<span class="verdict" style="background:#c62828">Request changes — 2 confirmed finding(s), 1 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. UPDATE statement missing WHERE clause extends every session in the table</strong>
+  <div class="loc">ledgerly/auth.py:70 &middot; correctness</div>
+  <div>The UPDATE in refresh_token has no WHERE clause: `db.execute(&quot;UPDATE tokens SET expires_at = ?&quot;, (...,))`. It sets expires_at on every row in the tokens table, not just the row for the token being refreshed. Concrete scenario: user A logs in and later has their token expire naturally; user B calls refresh_token with their own valid token. Because the UPDATE has no filter, user A&#x27;s already-expired (or soon-to-expire) token row is also rewritten with a fresh expiry, silently reviving/extending sessions for every other logged-in user (or previously-expired-but-not-yet-purged rows) in the system. This should be `&quot;UPDATE tokens SET expires_at = ? WHERE token = ?&quot;` with the token bound as a second parameter.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/auth.py:65-73; refresh_token executes `db.execute(&quot;UPDATE tokens SET expires_at = ?&quot;, (new_expiry,))` with no WHERE clause, so every row in the tokens table is updated regardless of which token was passed in. Reproduced via execution: registered alice and bob, logged both in, manually expired alice&#x27;s token row, then called auth.refresh_token(db, token_b) for bob&#x27;s token only. Querying the DB afterward showed alice&#x27;s token row was also rewritten with a fresh ~24h expiry (from an expired &#x27;2026-08-29T13:03:56+00:00&#x27; to &#x27;2026-08-30T10:03:56&#x27;, while current time was &#x27;2026-08-29T14:03:</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>2. Test only checks trivial return value, never verifies the actual expiry side effect or token scoping</strong>
+  <div class="loc">tests/test_ledgerly.py:60 &middot; test-adequacy</div>
+  <div>test_refresh_token only asserts `auth.refresh_token(db, token) == token`. Looking at the implementation (ledgerly/auth.py:65-73), refresh_token unconditionally returns the same token it was given as long as authenticate() doesn&#x27;t raise — so this assertion is guaranteed to pass regardless of whether the expiry was actually extended, or even whether the UPDATE statement is correct at all. The test never queries the tokens table to confirm expires_at was moved forward, and it uses only a single token in the database, so it cannot detect that the UPDATE statement in auth.py:70 has no WHERE clause and therefore blindly rewrites expires_at for every row in the tokens table (i.e., refreshing one user&#x27;s token silently extends every other logged-in user&#x27;s session too). A test that created two tokens (e.g., for two different users), called refresh_token on only one, and then asserted the other token&#x27;s expiry was unchanged would have caught this; as written, the test provides no coverage of the feature&#x27;s actual behavior.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/auth.py:65-73 confirming refresh_token calls authenticate() then executes `UPDATE tokens SET expires_at = ?` with no WHERE clause, always returning the input token regardless of the UPDATE&#x27;s correctness. Read tests/test_ledgerly.py:60-62 confirming test_refresh_token only asserts `auth.refresh_token(db, token) == token` with a single token in the DB, never querying expires_at or using a second user&#x27;s token. Reproduced live: created two users/tokens, called refresh_token on alice&#x27;s token, and confirmed bob&#x27;s token expires_at changed too (and lost its timezone suffix), demonstratin</div>
+</div>
+<footer>Pipeline: reviewer_correctness (2) &rarr; reviewer_security (1) &rarr; reviewer_tests (1) &rarr; reviewer_nitpick (3) &rarr; verifier (2) &middot; 83.5s &middot;
+$0.39 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

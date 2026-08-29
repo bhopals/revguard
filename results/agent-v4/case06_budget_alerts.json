@@ -1,0 +1,89 @@
+{
+  "case": "case06_budget_alerts",
+  "system": "agent-v4",
+  "findings": [
+    {
+      "file": "ledgerly/reports.py",
+      "line": 73,
+      "category": "correctness",
+      "severity": "critical",
+      "title": "Integer division order truncates percentage, defeating the 80% early-warning purpose",
+      "description": "`pct = spent // b[\"limit_cents\"] * 100` performs integer division before multiplying by 100, so `pct` can only ever be 0, 100, 200, ... (a multiple of 100) for any spend strictly between multiples of the limit. E.g. limit_cents=10000, spent=9500 (95% of budget) gives spent // limit_cents == 0, so pct == 0, and the category is never flagged even though it's well past the 80% threshold. The function only starts alerting once spend reaches or exceeds 100% of the budget (spent >= limit_cents), which contradicts both the docstring ('reached threshold_pct of their budget') and the PR's stated goal of warning users 'before they go over.' The correct computation is `(spent * 100) // b[\"limit_cents\"]` (multiply before dividing) to get an accurate percentage.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/reports.py line 73: `pct = spent // b[\"limit_cents\"] * 100`. Ran budget_alerts with a fake db returning spent=9500, limit_cents=10000 (95% of budget): result was `[]`, i.e., no alert despite being well past the 80% threshold. Verified `(spent*100)//limit_cents` gives the correct 95%, confirming integer-division-before-multiply truncates pct to multiples of 100 and the function only ever fires once spend >= limit_cents (100%+), defeating the early-warning purpose described in the docstring and PR title.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "tests/test_ledgerly.py",
+      "line": 1,
+      "category": "test-adequacy",
+      "title": "No test coverage added for budget_alerts()",
+      "severity": "major",
+      "description": "The PR introduces a new public function `budget_alerts` with threshold logic and a default constant, but the test suite (tests/test_ledgerly.py) contains no tests referencing `budget_alerts` or `ALERT_THRESHOLD_PCT` at all. This is why the critical percent-calculation bug (floor division before scaling) shipped undetected \u2014 a single test asserting an alert fires at, say, 85% spend against a budget would have caught it immediately.",
+      "reviewer": "nitpick",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Grepped tests/test_ledgerly.py for 'budget_alerts' and 'ALERT_THRESHOLD_PCT' \u2014 zero matches. Ran the full test suite (pytest): 16 passed, none exercising the new function. Verified the underlying bug is real: `spent // limit * 100` with spent=8500, limit=10000 (85% spend) yields pct=0 due to integer floor division happening before scaling, versus correct 85.0 \u2014 exactly the class of bug a single alert-threshold test would catch. The finding accurately describes a genuine, reachable test-coverage gap tied to a real logic defect.",
+        "adjusted_severity": "major"
+      }
+    }
+  ],
+  "rejected_findings": [
+    {
+      "file": "ledgerly/reports.py",
+      "line": 62,
+      "category": "correctness",
+      "title": "budget_alerts and budget_status duplicate the same budgets query with no shared helper",
+      "severity": "minor",
+      "description": "budget_alerts (lines 65-69) re-issues the identical 'SELECT category, limit_cents FROM budgets WHERE user_id = ? AND month = ?' query and monthly_summary() call already present in budget_status (lines 43-47). Any future change to how budgets are fetched (e.g. adding filters, ordering) requires updating both places in lockstep; the duplication also makes it easy to miss that the two functions compute 'spent' and 'limit' inconsistently (percent formula bug above).",
+      "reviewer": "nitpick",
+      "verification": {
+        "verdict": "REJECTED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/reports.py: the two queries at lines 43-47 (budget_status) and 65-69 (budget_alerts) are indeed textually identical, so the duplication itself is factually accurate. However, the finding does not identify any actual incorrect runtime behavior caused by this duplication \u2014 both functions still compute 'spent' via the same monthly_summary() and query results correctly for their respective purposes. The claim is a DRY/maintainability nitpick about future risk of divergence, not a demonstrable correctness defect (it even parenthetically defers the real bug \u2014 the percent formula \u2014 to a separate finding). This matches the 'purely stylistic' rejection criterion despite being labeled category=correctness.",
+        "adjusted_severity": "minor"
+      }
+    }
+  ],
+  "raw_finding_count": 6,
+  "merged_count": 3,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 1,
+      "seconds": 19.8,
+      "cost_usd": 0.035967
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 0,
+      "seconds": 16.7,
+      "cost_usd": 0.04580700000000001
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 1,
+      "seconds": 29.5,
+      "cost_usd": 0.0641872
+    },
+    {
+      "stage": "reviewer_nitpick",
+      "findings": 4,
+      "seconds": 37.5,
+      "cost_usd": 0.0793374
+    },
+    {
+      "stage": "verifier",
+      "in": 3,
+      "confirmed": 2,
+      "seconds": 20.5
+    }
+  ],
+  "seconds": 58.0,
+  "cost_usd": 0.3493
+}

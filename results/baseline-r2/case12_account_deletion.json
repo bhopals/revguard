@@ -1,0 +1,41 @@
+{
+  "case": "case12_account_deletion",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/account.py",
+      "line": 8,
+      "category": "security",
+      "title": "Bulk delete has no ownership check (IDOR)",
+      "severity": "critical",
+      "description": "delete_expenses_bulk() accepts user_id but never uses it to scope the DELETE. The query only filters by `id IN (...)`, so any authenticated user can pass arbitrary expense_ids belonging to other users and delete them. The WHERE clause must also include `AND user_id = ?` to prevent cross-account deletion."
+    },
+    {
+      "file": "ledgerly/account.py",
+      "line": 17,
+      "category": "correctness",
+      "title": "User row deleted before dependent rows",
+      "severity": "major",
+      "description": "delete_account() deletes from `users` first, then `expenses` and `tokens` that reference user_id. If foreign key constraints are enforced (PRAGMA foreign_keys=ON) this will raise an integrity error; if not enforced, an early failure/crash after the first statement still leaves expenses/tokens referencing a now-deleted user_id (orphaned rows), defeating the GDPR full-removal goal. Dependent rows should be deleted before the parent user row."
+    },
+    {
+      "file": "ledgerly/account.py",
+      "line": 15,
+      "category": "robustness",
+      "title": "Multi-statement deletion not wrapped in a transaction",
+      "severity": "major",
+      "description": "The three DELETE statements in delete_account() are executed independently with no transaction/commit-or-rollback boundary. If the process crashes or an exception occurs between statements (e.g. a locked table or FK violation), the account ends up partially deleted, leaving inconsistent state and, for a GDPR-motivated deletion, residual personal data."
+    },
+    {
+      "file": "ledgerly/account.py",
+      "line": 1,
+      "category": "test-adequacy",
+      "title": "No tests for new deletion functions",
+      "severity": "major",
+      "description": "Neither delete_expenses_bulk() nor delete_account() has accompanying tests. Given these are destructive, security-sensitive operations, tests should at minimum cover: bulk delete of a mix of owned/unowned expense IDs (to catch the IDOR), empty expense_ids list, and full account deletion verifying expenses/tokens/user rows are all removed and behavior on partial failure."
+    }
+  ],
+  "seconds": 29.4,
+  "cost_usd": 0.032006799999999995,
+  "num_turns": 1
+}

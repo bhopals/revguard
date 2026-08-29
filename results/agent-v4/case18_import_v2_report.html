@@ -1,0 +1,79 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Importer v2: category mapping and atomic batches</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Importer v2: category mapping and atomic batches</h1>
+<div class="sub">Statement import learns two things users kept asking for: map merchant descriptions to categories (case-insensitive prefix rules, e.g. &#x27;COFFEE&#x27; -&gt; food), and all-or-nothing batches so a bad row no longer leaves a half-imported statement. Duplicate detection was also simplified and sped up by keying on (date, amount).</div>
+<span class="verdict" style="background:#c62828">Request changes — 6 confirmed finding(s), 1 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. Atomic batch guarantee is broken: add_expense commits each row individually inside the outer transaction</strong>
+  <div class="loc">ledgerly/importers.py:112 &middot; correctness</div>
+  <div>import_statement wraps the row loop in `with db.transaction():` (line 107) and its docstring promises &#x27;if any row cannot be imported, no expense from this statement is recorded.&#x27; However, add_expense() (ledgerly/expenses.py:24) inserts via db.execute(), and Database.execute() (ledgerly/db.py:126-129) itself opens its own `with self.transaction():` and calls self.conn.commit() right after the INSERT. Since sqlite3 has no real nested-transaction concept here, that inner commit() commits the *entire* currently-open transaction immediately, including this row, permanently, before the loop even reaches later rows. Concrete failure: call import_statement with category_map={&#x27;COFFEE&#x27;: &#x27;food&#x27;, &#x27;GROCER&#x27;: &#x27;yachts&#x27;} on a statement whose first row is &#x27;COFFEE CO&#x27; and second row is &#x27;GROCER LTD&#x27;. Row 1 succeeds and is committed to disk by add_expense&#x27;s internal commit. Row 2&#x27;s category_for() raises ImportError_(&#x27;yachts&#x27; not in VALID_CATEGORIES), which propagates out of the loop; the outer `with db.transaction()` except-clause calls conn.rollback(), but there is nothing left to roll back because row 1 was already committed by the nested call. The result is a partially-imported statement (the food expense for COFFEE CO persists) with no import_batches audit row at all (the INSERT at line 115 is never reached) — the exact opposite of the &#x27;all-or-nothing&#x27; behavior the PR title and docstring claim. The existing test (test_mapping_to_unknown_category) only exercises the case where the very first row fails, so it never surfaces this bug.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/db.py: Database.execute() wraps its single INSERT in its own `with self.transaction():` block, which calls self.conn.commit() unconditionally on success (lines 126-129, transaction() at 109-116) — sqlite3 has no real nested transactions, so this commits the whole connection state, not just the row. add_expense() (expenses.py:24) calls db.execute() for its INSERT. Reproduced the exact scenario from the finding: called import_statement(db, user, statement_with_2_rows, category_map={&#x27;COFFEE&#x27;:&#x27;food&#x27;,&#x27;GROCER&#x27;:&#x27;yachts&#x27;}) inside the outer `with db.transaction()` in importers.py. Row 1 (</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>2. test_atomic_batch never exercises a failure — cannot detect broken atomicity</strong>
+  <div class="loc">tests/test_importers.py:68 &middot; test-adequacy</div>
+  <div>TestAtomicity.test_atomic_batch (lines 69-74) only imports a fully valid STATEMENT and checks the success counts and batch row, identical in substance to the pre-existing TestImport.test_import_and_reimport. It never triggers a mid-batch failure (e.g. a bad row, a category-mapping error on a later row, or an add_expense validation error), so it would pass unchanged even if `with db.transaction():` in import_statement were deleted entirely, or if rollback silently failed to undo prior inserts. The PR&#x27;s headline claim — &#x27;a malformed row no longer leaves a half-imported statement behind&#x27; — has zero coverage. In fact, add_expense() calls db.execute(), which itself opens its own `with self.transaction(): ... self.conn.commit()` (ledgerly/db.py:126-129) on every row, committing each insert to the underlying sqlite3 connection as it happens; the outer transaction in import_statement (importers.py:107) therefore cannot roll back rows already committed by earlier iterations if a later row fails. No test in this PR would catch that the atomicity guarantee is broken for any statement where a later row fails after an earlier row succeeded.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/db.py, expenses.py, importers.py, and tests/test_importers.py. Confirmed db.execute() (used by add_expense) wraps every call in its own `with self.transaction(): ... self.conn.commit()`, which unconditionally commits the underlying sqlite3 connection regardless of the outer `with db.transaction():` in import_statement — there are no savepoints, so nested transaction() calls defeat the outer rollback. Reproduced live: imported a 2-row statement with a category_map causing the second row to raise ImportError_ after the first row&#x27;s add_expense already succeeded; import_statement rai</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>3. test_mapping_to_unknown_category only checks the exception, never checks DB state, and fails on the first row so it cannot expose the partial-commit bug</strong>
+  <div class="loc">tests/test_importers.py:62 &middot; test-adequacy</div>
+  <div>test_mapping_to_unknown_category asserts only that ImportError_ is raised; it never queries the expenses or import_batches tables afterward to confirm nothing was persisted. Additionally, because category_map={&#x27;COFFEE&#x27;: &#x27;yachts&#x27;} matches the very first parsed row (COFFEE CO), category_for() raises before any add_expense call executes, so this test happens to pass even though (per db.py&#x27;s non-nested transaction handling) any row that succeeds before the failing one would already be durably committed. A category map that fails on a later row (e.g. mapping STREAM, which appears last, to an invalid category after COFFEE/GROCER already succeeded) combined with an assertion that db.query(&#x27;SELECT * FROM expenses ...&#x27;) returns no rows would have caught that import_statement leaves partial data behind on failure — exactly the regression this PR claims to fix.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read db.py: Database.execute() opens its own nested `with self.transaction(): ... self.conn.commit()`, and expenses.add_expense() calls db.execute() for each insert. This means each row committed inside the outer `with db.transaction():` in import_statement is actually committed immediately per-row, not held until the batch&#x27;s final commit. Reproduced with a script: import_statement(db, user, STATEMENT, category_map={&#x27;STREAM&#x27;: &#x27;yachts&#x27;}) (STREAM is the last parsed row) raises ImportError_ as expected, but a subsequent `db.query(&#x27;SELECT * FROM expenses&#x27;)` shows 2 rows already persisted (COFFEE C</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>4. Duplicate key dropped description, causing legitimate same-day/same-amount expenses to be silently skipped</strong>
+  <div class="loc">ledgerly/importers.py:90 &middot; correctness</div>
+  <div>_is_duplicate now matches on (user_id, spent_on, amount_cents) only (lines 91-95), whereas the pre-PR version also matched on note/description. Any two distinct real transactions that happen to share the same date and amount — e.g. two separate $12.50 purchases at different merchants on the same day, one already recorded (manually or from a prior import) and one appearing in a new statement — will now cause the second, legitimate expense to be treated as a duplicate and silently dropped (counted only as &#x27;skipped&#x27;, with no distinguishing signal that it was actually a different transaction). This is a regression from a guarantee the old code enforced (a description match was required before treating rows as duplicates), and it results in real spend data being lost during import without any error or warning to the user.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/importers.py: _is_duplicate (line 90-96) now queries only on (user_id, spent_on, amount_cents), with note/desc removed from both the SQL WHERE clause and the function signature, exactly as the diff shows. Reproduced live: imported a statement with a $12.50 &#x27;Starbucks Coffee&#x27; charge on 2026-03-01, then imported a second statement with a distinct $12.50 &#x27;Dominos Pizza&#x27; charge on the same date. Result: first import (1 imported, 0 skipped), second import (0 imported, 1 skipped) — the legitimate second transaction was silently treated as a duplicate and dropped purely because date+amo</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>5. Docstring promises atomic all-or-nothing import, but each expense insert is committed individually and survives rollback</strong>
+  <div class="loc">ledgerly/importers.py:107 &middot; correctness</div>
+  <div>`import_statement` wraps the loop in `with db.transaction():` and the docstring (line 100-103) explicitly states the batch is all-or-nothing and &#x27;no expense from this statement is recorded&#x27; if any row fails. But each row is written via `add_expense` -&gt; `db.execute` (ledgerly/expenses.py / ledgerly/db.py:126-129), and `Database.execute` itself opens its own `with self.transaction():` and calls `self.conn.commit()` immediately after every insert (ledgerly/db.py:110-116). Because sqlite3 commits are connection-wide, each row&#x27;s commit is not deferred to the outer transaction — it is durably written the moment `add_expense` returns. If a later row fails (e.g. `category_for` raises `ImportError_` for a mapping to an invalid category at line 84, or `add_expense` raises `ExpenseError` for a too-long note), the exception propagates up to the outer `with db.transaction():` block, whose `except` clause calls `self.conn.rollback()` — but there is nothing left to roll back, since the prior rows already committed individually. The result is a half-imported statement with no `import_batches` row recorded for it, which is exactly the failure mode this PR claims to have fixed. Example: a 3-row statement where row 1 and 2 map to valid categories and row 3 maps to an unknown category via `category_map` will leave rows 1-2 permanently in `expenses` even though `import_statement` raises. The existing test (`TestAtomicity.test_atomic_batch`) never exercises a failure case, and `test_mapping_to_unknown_category` happens to fail on the very first row, masking the bug.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/db.py: Database.transaction() commits/rolls back the shared sqlite3 connection, and Database.execute() wraps every single statement in its own with self.transaction() call, committing after each insert. add_expense -&gt; db.execute inherits this. Reproduced directly: built a 3-row statement where row 3 maps to an invalid category via category_map (triggering ImportError_ in category_for at line 84), called import_statement inside a fresh in-memory Database. Result: import_statement raised as expected, but querying the expenses table afterward showed 2 rows durably present (COFFEE SH</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#8d6e63">MINOR</span>
+  <strong>6. category_for is not actually case-insensitive with respect to the mapping keys, contradicting its docstring</strong>
+  <div class="loc">ledgerly/importers.py:82 &middot; correctness</div>
+  <div>The docstring (lines 78-79) and the module docstring (lines 9-10) both describe the feature as &#x27;case-insensitive prefix rules&#x27;, implying a caller can supply prefixes in any case. The implementation only uppercases `desc` (`desc.upper().startswith(prefix)`) and never normalizes `prefix`, so a mapping such as `{&quot;Coffee&quot;: &quot;food&quot;}` or `{&quot;coffee&quot;: &quot;food&quot;}` will silently fail to match `&#x27;COFFEE CO&#x27;` and the row falls back to `DEFAULT_CATEGORY` with no warning or error. This is a real trap for API callers who build `category_map` from user input (e.g. a settings UI where a user types a lowercase rule) — categorization will silently degrade to &#x27;other&#x27; instead of applying the rule or raising an error, and nothing in the code or tests catches this mismatch between documented and actual behavior.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/importers.py:81-82 — `desc.upper().startswith(prefix)` normalizes only `desc`, never `prefix`. Confirmed via execution: `category_for(&#x27;COFFEE CO&#x27;, {&#x27;coffee&#x27;: &#x27;food&#x27;})` and `category_for(&#x27;COFFEE CO&#x27;, {&#x27;Coffee&#x27;: &#x27;food&#x27;})` both return &#x27;other&#x27; (DEFAULT_CATEGORY) instead of &#x27;food&#x27;, while only `{&#x27;COFFEE&#x27;: &#x27;food&#x27;}` (already uppercase) works. This directly contradicts the &#x27;case-insensitive prefix rules&#x27; claim in both the module docstring (lines 9-10) and category_for&#x27;s own docstring (lines 78-79). Grep confirms no normalization of `prefix` exists anywhere in the function or file. Existin</div>
+</div>
+<footer>Pipeline: reviewer_correctness (2) &rarr; reviewer_security (0) &rarr; reviewer_tests (2) &rarr; reviewer_nitpick (2) &rarr; verifier (6) &middot; 140.6s &middot;
+$1.17 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

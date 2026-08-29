@@ -1,0 +1,58 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Add CSV export for expenses</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Add CSV export for expenses</h1>
+<div class="sub">Adds a new export module so users can download their expenses as a CSV file. Supports an optional category filter and writes into an exports/ directory using the caller-supplied filename.</div>
+<span class="verdict" style="background:#c62828">Request changes — 3 confirmed finding(s), 2 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. SQL injection via category parameter</strong>
+  <div class="loc">ledgerly/export.py:18 &middot; security</div>
+  <div>The `category` argument is interpolated directly into the SQL string with an f-string instead of being passed as a bound parameter, even though `user_id` on the same query correctly uses a `?` placeholder. Any caller that passes user-controlled category text (e.g. a web form field) allows SQL injection: a value like `x&#x27; OR &#x27;1&#x27;=&#x27;1&#x27; --` breaks out of the quoted literal, and a value like `x&#x27;; DROP TABLE expenses; --` (if the driver permits statement stacking) or a UNION-based payload can be used to read or corrupt other users&#x27; data. This defeats the `user_id = ?` scoping entirely since the injected clause can be crafted to bypass or extend the WHERE condition.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/export.py and ledgerly/db.py: db.query() executes raw SQL via sqlite3 with no sanitization, and export_expenses_csv builds `sql += f&quot; AND category = &#x27;{category}&#x27;&quot;` while user_id correctly uses a `?` placeholder. Wrote and ran a live exploit: seeded a DB with expenses for user_id=1 (alice) and user_id=2 (bob), then called export_expenses_csv(db, 1, &#x27;exploit.csv&#x27;, category=&quot;nonexistent&#x27; OR user_id=2 --&quot;) as alice. The exported CSV contained bob&#x27;s &#x27;secret&#x27; expense despite alice&#x27;s user_id scoping, proving the injection bypasses the WHERE user_id = ? filter and leaks cross-user data.</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>2. Path traversal via caller-supplied filename</strong>
+  <div class="loc">ledgerly/export.py:12 &middot; security</div>
+  <div>`filename` is joined into `EXPORT_DIR` with `os.path.join` without any sanitization or basename restriction. If `filename` originates from user input (e.g. an API request parameter), a value like `../../etc/cron.d/evil` or an absolute path such as `/etc/passwd`-style path (os.path.join replaces the whole path when the second argument is absolute) lets the caller write the CSV file outside the `exports/` directory, overwriting arbitrary files reachable by the process, or escape into arbitrary locations on disk. There is no use of `os.path.basename(filename)` or validation against path separators/`..` segments.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/export.py: filename is passed directly into os.path.join(EXPORT_DIR, filename) with no basename/sanitization anywhere in the codebase (grep for basename/sanitize/secure_filename found nothing). Reproduced with python: os.path.join(&#x27;exports&#x27;, &#x27;../../etc/cron.d/evil&#x27;) and os.path.join(&#x27;exports&#x27;, &#x27;/tmp/absolute_evil.csv&#x27;) confirm Python&#x27;s documented join behavior (absolute path discards the base, &#x27;..&#x27; segments escape the dir). Then actually called export_expenses_csv(FakeDB(), 1, &#x27;../evil_outside.csv&#x27;) in a temp dir and confirmed the CSV file was written one directory above exports/</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#8d6e63">MINOR</span>
+  <strong>3. Money reintroduced as floating point instead of using the integer-cents convention</strong>
+  <div class="loc">ledgerly/export.py:28 &middot; correctness</div>
+  <div>The codebase&#x27;s documented invariant (ledgerly/db.py:3, &quot;All amounts are stored as integer cents to avoid floating point drift&quot;) and its existing helper `format_money` in ledgerly/utils.py compute dollars using pure integer arithmetic (`cents // 100`, `cents % 100`). export_expenses_csv instead performs `r[&#x27;amount_cents&#x27;] / 100` (true division producing a float) and formats it with `:.2f`. This bypasses the project&#x27;s established float-avoidance convention for money; for sufficiently large amount_cents values the binary float division loses precision relative to the exact integer-cents value, so the exported CSV amount can silently diverge from the true stored amount instead of being derived via the same exact integer-based formatting used everywhere else in the app (e.g. reports.py&#x27;s budget_status output).</div>
+  <div class="ev"><b>Verified (medium confidence):</b> Read ledgerly/db.py (documented invariant: amounts stored as integer cents to avoid float drift) and ledgerly/utils.py&#x27;s format_money, which does cents//100 / cents%100 integer arithmetic; reports.py/budget_status likewise operates purely on integer cents. export.py:28 instead does r[&#x27;amount_cents&#x27;]/100 formatted with :.2f. Wrote a Python script comparing the exact integer-based formatting vs the float-division formatting across many amount_cents values; for magnitudes below ~10^16 they always agreed, but starting at 10^16 (e.g. 10000000000000001, 10000000000000004, ...) the float-division out</div>
+</div>
+<footer>Pipeline: reviewer_correctness (2) &rarr; reviewer_security (2) &rarr; reviewer_tests (0) &rarr; verifier (3) &middot; 173.6s &middot;
+$0.45 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

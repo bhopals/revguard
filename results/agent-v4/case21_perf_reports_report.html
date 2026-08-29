@@ -1,0 +1,58 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Report performance: single-query budget status</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Report performance: single-query budget status</h1>
+<div class="sub">budget_status did 1 + N queries (a summary plus one per budget). This PR collapses it into a single LEFT JOIN aggregate, adds a covering index for the expense lookup path, and relaxes sqlite synchronous mode for faster writes. No behavior change intended.</div>
+<span class="verdict" style="background:#c62828">Request changes — 3 confirmed finding(s), 1 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. budget_status join drops the month filter on expenses, aggregating all-time spend instead of the requested month&#x27;s spend</strong>
+  <div class="loc">ledgerly/reports.py:44 &middot; correctness</div>
+  <div>The rewritten query joins `expenses e` to `budgets b` only on `e.user_id = b.user_id AND e.category = b.category` — it never constrains `e.spent_on` to the requested month. The old code computed `spend` via `monthly_summary`, which filters expenses with `substr(spent_on, 1, 7) = ?` (the month), so `spent` was always scoped to the queried month. Now `spent` is the SUM of every expense the user has ever logged in that category, across all months. Concrete failure: a user sets a $50/month &#x27;food&#x27; budget for 2026-03, spends $40 in 2026-01 and $20 in 2026-03 (well under budget for March). `budget_status(db, user, &#x27;2026-03&#x27;)` will report spent=$60, remaining=-$10, and over_budget=True, even though March spend is only $20 and under budget. This also corrupts `run_budget_alerts` in ledgerly/notify.py, which calls `budget_status` directly and fires an &#x27;over_budget&#x27; notification based on the inflated, cross-month total — a user could receive incorrect over-budget alerts driven entirely by spending from unrelated months. This directly contradicts the PR&#x27;s own description (&#x27;No behavior change intended&#x27;) and the function&#x27;s docstring (&#x27;Compare spend against each budget set for the month&#x27;).</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/reports.py: the LEFT JOIN condition is `e.user_id = b.user_id AND e.category = b.category` only, with no constraint on e.spent_on, while the WHERE clause filters only budgets (b.user_id, b.month). Reproduced with a live SQLite DB matching the reviewer&#x27;s exact scenario: user has a $50 &#x27;food&#x27; budget for 2026-03, spends $40 in 2026-01 and $20 in 2026-03. budget_status(db, user, &#x27;2026-03&#x27;) returned spent=&#x27;$60.00&#x27;, remaining=&#x27;-$10.00&#x27;, over_budget=True — i.e. all-time spend across months, not just March&#x27;s $20. Also confirmed notify.py&#x27;s run_budget_alerts calls budget_status directly a</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>2. budget_status tests don&#x27;t cover cross-month expenses, missing the new query&#x27;s dropped month filter</strong>
+  <div class="loc">tests/test_ledgerly.py:96 &middot; test-adequacy</div>
+  <div>The PR rewrites budget_status&#x27;s query to join budgets to expenses only on user_id and category (ledgerly/reports.py:44-46), with no condition on expenses.spent_on/month, so &#x27;spent&#x27; now aggregates a category&#x27;s expenses across ALL months, not just the requested one. Both test_budget_status (line 96-101) and test_budget_upsert (line 103-107) only add expenses within the same month being queried (&#x27;2026-03&#x27;), so they cannot detect this regression. A test that adds an expense in a different month (e.g., &#x27;2026-04&#x27;) for the same category and asserts it is excluded from the March budget_status result would fail against the new implementation, but no such test exists, letting the query bug pass CI.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/reports.py:44-46: budget_status&#x27;s new SQL joins budgets to expenses only on user_id and category, with no filter on expenses.spent_on/month. Reproduced with a script: added a $2.00 March &#x27;food&#x27; expense and a $9.00 April &#x27;food&#x27; expense with a $10.00 March budget; budget_status(db, user, &#x27;2026-03&#x27;) returned spent=&#x27;$11.00&#x27; (should be &#x27;$2.00&#x27;), confirming cross-month expenses leak into the result. Ran the existing tests (test_budget_status, test_budget_upsert at lines 96-107) with pytest -k budget: both pass, since they only add expenses within the same queried month (&#x27;2026-03&#x27;), so </div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>3. Undocumented durability trade-off from PRAGMA synchronous = OFF</strong>
+  <div class="loc">ledgerly/db.py:110 &middot; correctness</div>
+  <div>The PR silently drops SQLite&#x27;s fsync-on-commit guarantee (synchronous=OFF means writes are not flushed to disk before the OS reports success), with no comment explaining the trade-off, no mention in the PR description of the durability implications (an OS crash or power loss can now corrupt the database or lose committed transactions), and no accompanying WAL-mode change that is typically paired with this setting. A future maintainer reading this line has no way to know this was an intentional, understood risk versus an oversight, and &#x27;no behavior change intended&#x27; in the PR description is misleading since this is a real behavior change for crash safety.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/db.py:110 and confirmed the diff adds `self.conn.execute(&quot;PRAGMA synchronous = OFF&quot;)` with no accompanying comment. Verified via `python3 -c` that this pragma actually sets synchronous mode to 0 (OFF), which per SQLite semantics means the engine does not wait for data to be flushed to disk before reporting a transaction committed, risking corruption/lost transactions on OS crash or power loss. Grepped the whole repo for &#x27;journal_mode&#x27;/&#x27;WAL&#x27; and found none, confirming no WAL pairing exists anywhere on this code path. Grepped for any other &#x27;synchronous&#x27; references and found only th</div>
+</div>
+<footer>Pipeline: reviewer_correctness (1) &rarr; reviewer_security (1) &rarr; reviewer_tests (1) &rarr; reviewer_nitpick (3) &rarr; verifier (3) &middot; 96.1s &middot;
+$0.58 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

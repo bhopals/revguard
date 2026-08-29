@@ -1,0 +1,49 @@
+{
+  "case": "case06_budget_alerts",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/reports.py",
+      "line": 74,
+      "category": "correctness",
+      "title": "Integer division truncates percentage before multiplying",
+      "severity": "critical",
+      "description": "`pct = spent // b[\"limit_cents\"] * 100` performs integer division first, so pct can only ever be a multiple of 100 (0, 100, 200, ...) regardless of actual spend. It should be `spent * 100 // b[\"limit_cents\"]` (or use float division). As written, any spend below 100% of the limit always yields pct == 0, so no alert ever fires until spend fully reaches or exceeds the budget \u2014 defeating the entire purpose of an '80% warning' feature."
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 75,
+      "category": "correctness",
+      "title": "Threshold comparison uses > instead of >=, and combined with truncation bug never fires near 80%",
+      "severity": "major",
+      "description": "The PR description says alerts should fire when spend 'has reached' the threshold percentage, implying pct >= threshold_pct should alert. Using `>` means spend exactly at the threshold (e.g. spent exactly 80% of limit) is not flagged. Combined with the truncation bug above, in practice alerts only fire once spend reaches/exceeds 200% of the budget, since pct only takes values 0, 100, 200, ..."
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 74,
+      "category": "robustness",
+      "title": "Division by zero when a budget limit is 0 or missing",
+      "severity": "major",
+      "description": "`spent // b[\"limit_cents\"]` will raise ZeroDivisionError if a budget row has limit_cents == 0. Nothing in this diff (or visible schema) guarantees limit_cents is always positive, so a zero/misconfigured budget will crash the whole alerts call instead of being handled gracefully."
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 64,
+      "category": "robustness",
+      "title": "No validation of threshold_pct argument",
+      "severity": "minor",
+      "description": "threshold_pct is accepted from the caller with no bounds checking. A negative value would cause every budgeted category to alert regardless of actual spend, and values are not validated to be within a sane 0-100+ range, which could produce confusing/incorrect UI warnings if misused by a caller."
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 62,
+      "category": "test-adequacy",
+      "title": "No tests added for budget_alerts",
+      "severity": "major",
+      "description": "The diff introduces a new public function budget_alerts() with nontrivial percentage/threshold logic but adds no unit tests. Given the severity of the truncation and comparison bugs above, basic tests (e.g., spend at 50%, exactly 80%, 99%, 100%, over 100%, and zero-limit budget) would have caught these defects before merge."
+    }
+  ],
+  "seconds": 24.7,
+  "cost_usd": 0.029612799999999998,
+  "num_turns": 1
+}

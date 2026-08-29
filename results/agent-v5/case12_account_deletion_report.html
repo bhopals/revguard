@@ -1,0 +1,51 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Bulk delete and account deletion</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Bulk delete and account deletion</h1>
+<div class="sub">Adds delete_expenses_bulk() for multi-select delete in the UI and delete_account() for GDPR-style full account removal.</div>
+<span class="verdict" style="background:#c62828">Request changes — 2 confirmed finding(s), 2 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. delete_account deletes parent row before children, violating FK constraints</strong>
+  <div class="loc">ledgerly/account.py:17 &middot; correctness</div>
+  <div>delete_account() issues `DELETE FROM users WHERE id = ?` (line 17) before deleting the user&#x27;s expenses (line 18) and tokens (line 19). The schema (ledgerly/db.py) defines expenses.user_id and tokens.user_id as `REFERENCES users(id)` with no ON DELETE CASCADE, and Database.__init__ runs `PRAGMA foreign_keys = ON`. For any user who has at least one expense or token row, the first DELETE will raise sqlite3.IntegrityError (&#x27;FOREIGN KEY constraint failed&#x27;), which propagates out of delete_account since db.execute&#x27;s transaction() context manager rolls back and re-raises. The function therefore crashes and removes nothing for exactly the users it&#x27;s meant to serve (those who &#x27;own&#x27; data), contradicting its own docstring &#x27;Remove the user and everything they own.&#x27; It only succeeds as a no-op for users with zero expenses/tokens. The deletes must be reordered to delete children (expenses, tokens) before the parent (users).</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/db.py confirming expenses.user_id and tokens.user_id are FK REFERENCES users(id) with no ON DELETE CASCADE, and PRAGMA foreign_keys = ON is set in Database.__init__. Reproduced with python3: created a user with one expense row and called delete_account(db, uid) — it raised sqlite3.IntegrityError(&#x27;FOREIGN KEY constraint failed&#x27;), and afterward both the user and expense rows remained (transaction rolled back), i.e., the function crashed and deleted nothing. For a user with zero owned rows, delete_account succeeded and removed the user. This exactly matches the reviewer&#x27;s descriptio</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>2. delete_expenses_bulk does not scope deletion to the requesting user</strong>
+  <div class="loc">ledgerly/account.py:9 &middot; correctness</div>
+  <div>delete_expenses_bulk(db, user_id, expense_ids) accepts a user_id parameter but never uses it in the SQL: `DELETE FROM expenses WHERE id IN ({placeholders})` (lines 9-12) filters only by expense id, with no `AND user_id = ?` clause. Every other expense operation in the codebase scopes by user_id (e.g. get_expense/delete_expense/list_expenses in ledgerly/expenses.py, whose module docstring states &#x27;Every operation is scoped to the owning user&#x27;). As written, if a caller (e.g. the bulk-delete UI action) invokes delete_expenses_bulk with an expense_id belonging to a different user, that other user&#x27;s expense will be deleted, since ownership is never checked. This breaks the per-user isolation guarantee every other expense function in the codebase enforces.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/account.py: delete_expenses_bulk builds `DELETE FROM expenses WHERE id IN (...)` using only expense_ids, never referencing the user_id parameter, unlike every other function in ledgerly/expenses.py (get_expense, delete_expense, list_expenses) which all include `AND user_id = ?`. Executed a live reproduction with sqlite3: created expenses belonging to user 100 and user 200, then called delete_expenses_bulk(db, 100, [2]) where id 2 belongs to user 200 — the expense was deleted despite belonging to a different user, confirming cross-user deletion is possible with no ownership check.</div>
+</div>
+<footer>Pipeline: reviewer_correctness (3) &rarr; reviewer_security (1) &rarr; reviewer_tests (0) &rarr; verifier (2) &middot; 70.7s &middot;
+$0.40 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>
