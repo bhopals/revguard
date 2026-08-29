@@ -1,0 +1,24 @@
+{
+  "id": "case03_pagination",
+  "title": "Configurable page size for expense listing",
+  "pr_description": "Lets API callers choose a page size when listing expenses and adds a page_count helper so clients can render pagination controls.",
+  "clean": false,
+  "defects": [
+    {
+      "id": "c03-d1",
+      "file": "ledgerly/expenses.py",
+      "anchor": "return total // page_size + 1",
+      "category": "correctness",
+      "severity": "major",
+      "description": "page_count is off by one when the total is an exact multiple of the page size: 40 items at 20 per page reports 3 pages. Should be ceil division, e.g. (total + page_size - 1) // page_size, with the zero-items case handled."
+    },
+    {
+      "id": "c03-d2",
+      "file": "ledgerly/expenses.py",
+      "anchor": "if page < 1:",
+      "category": "robustness",
+      "severity": "major",
+      "description": "page_size is never validated. In SQLite, LIMIT -1 means 'no limit', so a caller passing page_size=-1 dumps the user's entire table in one response; 0 or huge values are also accepted silently."
+    }
+  ]
+}

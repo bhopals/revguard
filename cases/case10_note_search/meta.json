@@ -1,0 +1,24 @@
+{
+  "id": "case10_note_search",
+  "title": "Search expenses by note",
+  "pr_description": "Adds search_expenses() so users can find expenses by note text, with a configurable sort column for the results.",
+  "clean": false,
+  "defects": [
+    {
+      "id": "c10-d1",
+      "file": "ledgerly/expenses.py",
+      "anchor": "ORDER BY {sort}",
+      "category": "security",
+      "severity": "critical",
+      "description": "The sort column is interpolated into the SQL via an f-string. A caller-controlled sort value enables SQL injection; it must be validated against an allowlist of column names."
+    },
+    {
+      "id": "c10-d2",
+      "file": "ledgerly/expenses.py",
+      "anchor": "pattern = f\"%{text}%\"",
+      "category": "correctness",
+      "severity": "minor",
+      "description": "LIKE wildcards in the search text are not escaped, so searching for '100%' or 'a_b' matches unintended rows. % and _ must be escaped with an ESCAPE clause."
+    }
+  ]
+}

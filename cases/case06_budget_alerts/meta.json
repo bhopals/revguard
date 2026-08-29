@@ -1,0 +1,24 @@
+{
+  "id": "case06_budget_alerts",
+  "title": "Budget alert threshold",
+  "pr_description": "Adds budget_alerts() which flags every category whose spend has reached a configurable percentage of its monthly budget (default 80%), so the UI can warn users before they go over.",
+  "clean": false,
+  "defects": [
+    {
+      "id": "c06-d1",
+      "file": "ledgerly/reports.py",
+      "anchor": "pct = spent // b[\"limit_cents\"] * 100",
+      "category": "correctness",
+      "severity": "critical",
+      "description": "Integer floor division runs before the multiply, so pct is 0 for any spend below the limit and alerts only fire once the budget is already blown. Should be spent * 100 // limit_cents."
+    },
+    {
+      "id": "c06-d2",
+      "file": "ledgerly/reports.py",
+      "anchor": "if pct > threshold_pct:",
+      "category": "correctness",
+      "severity": "minor",
+      "description": "The docstring and default promise alerts when spend has *reached* the threshold, but the strict > excludes exactly-80% spend. Should be >=."
+    }
+  ]
+}

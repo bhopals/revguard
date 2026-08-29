@@ -1,0 +1,8 @@
+{
+  "case": "case05_new_categories",
+  "system": "baseline",
+  "findings": [],
+  "seconds": 2.4,
+  "cost_usd": 0.0114308,
+  "num_turns": 1
+}

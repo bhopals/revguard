@@ -1,0 +1,37 @@
+{
+  "case": "case12_account_deletion",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/account.py",
+      "line": 10,
+      "category": "security",
+      "title": "Bulk delete missing ownership check (IDOR)",
+      "description": "delete_expenses_bulk accepts a user_id parameter but never uses it in the SQL. The DELETE only filters by `id IN (...)`, so any authenticated user can pass expense_ids belonging to other users and delete their expenses. This must filter with `AND user_id = ?` (and ideally verify the returned row count matches the requested IDs)."
+    },
+    {
+      "file": "ledgerly/account.py",
+      "line": 17,
+      "category": "correctness",
+      "title": "Account deletion order violates referential integrity",
+      "description": "delete_account deletes from `users` before deleting from `expenses` and `tokens`, which reference user_id. If foreign keys are enforced (PRAGMA foreign_keys=ON in SQLite), the first DELETE will fail with a constraint violation before the dependent rows are removed. If foreign keys are not enforced, this instead leaves orphaned expense/token rows if the process is interrupted between statements. Dependent rows should be deleted before the parent user row."
+    },
+    {
+      "file": "ledgerly/account.py",
+      "line": 15,
+      "category": "robustness",
+      "title": "No transactional atomicity for multi-statement deletes",
+      "description": "Both delete_expenses_bulk (single statement, less of an issue) and especially delete_account issue multiple separate db.execute() calls with no explicit transaction/commit-rollback handling shown. If any statement fails or the process crashes mid-sequence, the account can end up partially deleted (e.g., user removed but expenses/tokens remain, or vice versa), leaving the database in an inconsistent state. These operations should be wrapped in a single transaction that commits atomically or rolls back entirely on error."
+    },
+    {
+      "file": "ledgerly/account.py",
+      "line": 4,
+      "category": "test-adequacy",
+      "title": "No tests added for new deletion functions",
+      "description": "The PR introduces delete_expenses_bulk and delete_account, both of which perform destructive, security-sensitive operations, but no tests are included. At minimum, tests should cover: empty expense_ids list (no-op), attempting to delete another user's expenses (should be prevented), verifying all related rows (expenses, tokens) are removed on account deletion, and behavior when a delete partially fails."
+    }
+  ],
+  "seconds": 22.1,
+  "cost_usd": 0.0326848,
+  "num_turns": 1
+}

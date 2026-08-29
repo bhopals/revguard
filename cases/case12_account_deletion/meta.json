@@ -1,0 +1,24 @@
+{
+  "id": "case12_account_deletion",
+  "title": "Bulk delete and account deletion",
+  "pr_description": "Adds delete_expenses_bulk() for multi-select delete in the UI and delete_account() for GDPR-style full account removal.",
+  "clean": false,
+  "defects": [
+    {
+      "id": "c12-d1",
+      "file": "ledgerly/account.py",
+      "anchor": "f\"DELETE FROM expenses WHERE id IN ({placeholders})\",",
+      "category": "security",
+      "severity": "critical",
+      "description": "The bulk delete never filters by user_id, so any authenticated user can delete any other user's expenses by guessing ids (IDOR / broken object-level authorization). Compare delete_expense(), which scopes by owner."
+    },
+    {
+      "id": "c12-d2",
+      "file": "ledgerly/account.py",
+      "anchor": "\"DELETE FROM users WHERE id = ?\", (user_id,)",
+      "category": "robustness",
+      "severity": "major",
+      "description": "The users row is deleted first while expenses and tokens still reference it. With PRAGMA foreign_keys ON (set in db.py) the first DELETE raises IntegrityError and account deletion always fails; children must be deleted before the parent or in one transaction."
+    }
+  ]
+}

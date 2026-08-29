@@ -1,0 +1,57 @@
+{
+  "case": "case02_float_money",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/utils.py",
+      "line": 20,
+      "category": "correctness",
+      "severity": "critical",
+      "title": "Negative and zero amounts are now accepted",
+      "description": "The removed `if total <= 0: raise ValueError(...)` check is not replaced. `float(\"-5\")` and `float(\"0\")` parse successfully, so parse_money(\"-5\") now returns -500 and parse_money(\"0\") returns 0 instead of raising, silently allowing negative/zero expense amounts into the ledger. The removed test case for \"-5\" masks this regression."
+    },
+    {
+      "file": "ledgerly/utils.py",
+      "line": 20,
+      "category": "correctness",
+      "severity": "critical",
+      "title": "Floating-point rounding errors corrupt monetary values",
+      "description": "Using float() and `int(dollars * 100)` for currency is unsafe: many decimal amounts are not exactly representable in binary floating point (e.g. 19.99 * 100 can evaluate to 1998.9999999999998), and int() truncates rather than rounds, so parse_money can silently return the wrong number of cents for common, valid inputs. The previous regex+integer-arithmetic approach avoided this entirely."
+    },
+    {
+      "file": "ledgerly/utils.py",
+      "line": 20,
+      "category": "correctness",
+      "severity": "major",
+      "title": "Excess fractional digits are silently truncated instead of rejected",
+      "description": "The old regex limited the fractional part to 1-2 digits and rejected anything else (e.g. \"12.345\" raised ValueError). The new implementation accepts \"12.345\" as float 12.345, multiplies to 1234.5 and truncates to 1234 cents, silently discarding a half-cent instead of signalling malformed input. This changes documented/tested behavior without the PR describing it as a behavior change."
+    },
+    {
+      "file": "ledgerly/utils.py",
+      "line": 17,
+      "category": "robustness",
+      "severity": "major",
+      "title": "Non-ValueError exceptions can escape for inf/overflow inputs",
+      "description": "float(\"inf\") or float(\"1e400\") parse successfully (no ValueError raised by float()), but `int(dollars * 100)` on an infinite value raises OverflowError, not ValueError, which is not caught by the try/except and propagates uncontrolled, violating the function's documented contract of raising ValueError on malformed input."
+    },
+    {
+      "file": "ledgerly/utils.py",
+      "line": 15,
+      "category": "correctness",
+      "severity": "minor",
+      "title": "float() accepts formats the old parser rejected (scientific notation, underscores)",
+      "description": "Because parsing now delegates to Python's float(), strings like \"1e3\" or \"1_000\" are accepted as valid amounts (parsed as 1000.0), whereas the previous strict regex only accepted plain digits with an optional 1-2 digit fraction. This widens accepted input formats beyond what the docstring (\"$12.50\" style) and tests describe, which could let unexpected client input through."
+    },
+    {
+      "file": "tests/test_ledgerly.py",
+      "line": 28,
+      "category": "test-adequacy",
+      "severity": "major",
+      "title": "Regression tests for negative amounts and extra decimal digits were deleted, not updated",
+      "description": "The PR removes \"-5\" and \"12.345\" from the rejection test list instead of asserting the new (and arguably incorrect) behavior. This hides the negative/zero-amount regression and the silent-truncation regression described above, since no test exercises these inputs at all anymore."
+    }
+  ],
+  "seconds": 48.0,
+  "cost_usd": 0.059321799999999994,
+  "num_turns": 1
+}

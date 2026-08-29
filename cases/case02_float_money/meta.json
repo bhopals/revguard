@@ -1,0 +1,32 @@
+{
+  "id": "case02_float_money",
+  "title": "Simplify money parsing",
+  "pr_description": "Replaces the regex-based amount parser with a much simpler float() based implementation and updates the parser tests to match. Less code, same behavior for normal inputs.",
+  "clean": false,
+  "defects": [
+    {
+      "id": "c02-d1",
+      "file": "ledgerly/utils.py",
+      "anchor": "return int(dollars * 100)",
+      "category": "correctness",
+      "severity": "critical",
+      "description": "Converting via float and truncating with int() loses cents to binary floating point error: parse_money('19.99') returns 1998 instead of 1999. Money must not round-trip through float."
+    },
+    {
+      "id": "c02-d2",
+      "file": "ledgerly/utils.py",
+      "anchor": "dollars = float(text)",
+      "category": "robustness",
+      "severity": "major",
+      "description": "float() accepts inputs the old parser rejected: negatives ('-5'), sub-cent precision ('12.345'), scientific notation ('1e5'), 'nan' and 'inf'. The positive-amount and two-decimal guarantees are silently dropped."
+    },
+    {
+      "id": "c02-d3",
+      "file": "tests/test_ledgerly.py",
+      "anchor": "for bad in [\"\", \"abc\", \"1,000\"]:",
+      "category": "test-adequacy",
+      "severity": "major",
+      "description": "The PR weakens the regression test by removing the '-5' and '12.345' rejection cases so the new permissive parser still passes. Tests were edited to fit the bug instead of catching it."
+    }
+  ]
+}

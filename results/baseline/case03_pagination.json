@@ -1,0 +1,41 @@
+{
+  "case": "case03_pagination",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 62,
+      "category": "correctness",
+      "severity": "major",
+      "title": "page_count off-by-one for exact multiples",
+      "description": "page_count computes `total // page_size + 1`, which always adds an extra page. For total=10, page_size=10 this returns 2 pages instead of 1, and for total=0 it returns 1 instead of 0. Clients using this to render pagination controls will show a bogus trailing empty page (or a page when there are no items). The correct formula is ceiling division with a total=0 special case, e.g. `(total + page_size - 1) // page_size` (and 0 when total is 0)."
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 62,
+      "category": "robustness",
+      "severity": "minor",
+      "title": "page_count crashes on page_size <= 0",
+      "description": "page_count performs `total // page_size` with no validation of page_size. A caller passing page_size=0 gets a ZeroDivisionError, and a negative page_size silently produces a nonsensical negative-ish result. There is no guard analogous to the page>=1 check in list_expenses."
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 65,
+      "category": "security",
+      "severity": "major",
+      "title": "list_expenses accepts unvalidated page_size, allowing full-table dumps",
+      "description": "The new page_size parameter is passed straight into `LIMIT ? OFFSET ?` with no bounds checking. SQLite treats a negative LIMIT as 'no limit', so a caller passing page_size <= -1 defeats pagination entirely and can retrieve every expense row for a user in one call, bypassing the intended page-size control. There is also no upper bound, so an arbitrarily large page_size can be requested, leading to unbounded memory/row fetches per call (resource-exhaustion risk) \u2014 unlike the old code where PAGE_SIZE was a fixed constant."
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 65,
+      "category": "test-adequacy",
+      "severity": "minor",
+      "title": "No tests for new pagination behavior",
+      "description": "The diff adds count_expenses, page_count, and the page_size parameter to list_expenses but includes no accompanying tests for these code paths (e.g. exact-multiple totals, zero totals, custom page_size values, or invalid page_size). Given page_count has an off-by-one bug and list_expenses has no page_size validation, tests would likely have caught both defects."
+    }
+  ],
+  "seconds": 27.1,
+  "cost_usd": 0.040306800000000004,
+  "num_turns": 1
+}

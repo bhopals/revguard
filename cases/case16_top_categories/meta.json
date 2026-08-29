@@ -1,0 +1,25 @@
+{
+  "id": "case16_top_categories",
+  "title": "Top spending categories widget",
+  "pr_description": "Adds top_categories() for the dashboard widget: the user's n biggest categories for a month, formatted for display. Ties are broken alphabetically for stable rendering.",
+  "clean": false,
+  "tier": 2,
+  "defects": [
+    {
+      "id": "c16-d1",
+      "file": "ledgerly/reports.py",
+      "anchor": "key=lambda kv: format_money(kv[1]),",
+      "category": "correctness",
+      "severity": "critical",
+      "description": "The sort key formats cents into strings like '$9.00' and '$85.00' and sorts lexicographically, so '$9.00' outranks '$85.00'. Categories are ordered by string comparison, not spend. Must sort on the numeric cents value."
+    },
+    {
+      "id": "c16-d2",
+      "file": "ledgerly/reports.py",
+      "anchor": "reverse=True,",
+      "category": "correctness",
+      "severity": "minor",
+      "description": "The docstring and PR promise alphabetical tie-breaking, but there is no secondary sort key, and with reverse=True equal-spend categories come out in reverse-alphabetical order. Needs key=(-cents, name) style sorting."
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "case": "case10_note_search",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 66,
+      "category": "security",
+      "title": "SQL injection via unvalidated sort column",
+      "severity": "critical",
+      "description": "The `sort` parameter is directly interpolated into the SQL string with an f-string (`f\" ORDER BY {sort} DESC\"`) without any allowlist validation or escaping. Since `search_expenses` takes `sort` as a caller-controlled argument, if it is ever derived from user input (e.g., an API query parameter for sorting search results), an attacker can inject arbitrary SQL (e.g., `sort=\"id; DROP TABLE expenses;--\"` or a UNION-based injection to exfiltrate other users' data), unlike the `params` list used for `user_id`/`text` which are safely parameterized."
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 62,
+      "category": "robustness",
+      "title": "No pagination/limit on search results",
+      "severity": "major",
+      "description": "Unlike the adjacent function which applies `LIMIT ? OFFSET ?` with `PAGE_SIZE`, `search_expenses` has no limit at all. A broad search term (e.g., a common substring) against a large expenses table could return an unbounded number of rows, causing excessive memory use and slow responses."
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 63,
+      "category": "correctness",
+      "title": "LIKE wildcard characters in search text are not escaped",
+      "severity": "minor",
+      "description": "`text` is inserted into the LIKE pattern (`f\"%{text}%\"`) without escaping `%` or `_`, so if a user's note-search text itself contains these characters, they will be interpreted as SQL wildcards rather than literal characters, producing incorrect/surprising search results."
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 61,
+      "category": "test-adequacy",
+      "title": "No tests added for new function",
+      "severity": "major",
+      "description": "The PR adds `search_expenses` but includes no unit tests covering basic search behavior, the `sort` parameter, empty/no-match results, or (critically) the SQL-injection risk from the unvalidated `sort` argument."
+    }
+  ],
+  "seconds": 11.7,
+  "cost_usd": 0.0202548,
+  "num_turns": 1
+}

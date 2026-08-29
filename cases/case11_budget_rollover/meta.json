@@ -1,0 +1,33 @@
+{
+  "id": "case11_budget_rollover",
+  "title": "Roll unused budget into the next month",
+  "pr_description": "Frequently requested feature: at month end, carry each category's unspent budget into the next month. Adds a next_month helper and rollover_budgets(), plus a test.",
+  "clean": false,
+  "challenge": true,
+  "defects": [
+    {
+      "id": "c11-d1",
+      "file": "ledgerly/utils.py",
+      "anchor": "return f\"{y}-{int(m) + 1:02d}\"",
+      "category": "correctness",
+      "severity": "critical",
+      "description": "next_month never rolls the year: next_month('2026-12') returns '2026-13', an impossible month key, so December rollovers write budgets no query will ever find."
+    },
+    {
+      "id": "c11-d2",
+      "file": "ledgerly/reports.py",
+      "anchor": "set_budget(db, user_id, b[\"category\"], target, new_limit)",
+      "category": "correctness",
+      "severity": "major",
+      "description": "set_budget upserts, so if the user already set a custom budget for the target month, rollover silently overwrites it with last month's limit plus carry. Requires knowing set_budget's ON CONFLICT semantics one function up."
+    },
+    {
+      "id": "c11-d3",
+      "file": "tests/test_ledgerly.py",
+      "anchor": "assert len(status) >= 0",
+      "category": "test-adequacy",
+      "severity": "major",
+      "description": "The added rollover test asserts len(status) >= 0, which is always true. It cannot fail and verifies nothing about carried amounts, so both bugs above pass CI."
+    }
+  ]
+}

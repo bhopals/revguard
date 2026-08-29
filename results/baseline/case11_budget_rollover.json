@@ -1,0 +1,41 @@
+{
+  "case": "case11_budget_rollover",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/utils.py",
+      "line": 54,
+      "category": "correctness",
+      "severity": "critical",
+      "title": "next_month does not roll over the year for December",
+      "description": "next_month() computes int(m) + 1 without checking for month 12, so next_month('2026-12') returns '2026-13' instead of '2027-01'. This produces an invalid month key that will corrupt any December rollover (and any other code relying on next_month), and downstream budget_status/monthly_summary lookups for '2026-13' will silently find nothing."
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 76,
+      "category": "correctness",
+      "severity": "major",
+      "title": "rollover_budgets clobbers an existing budget already set for the target month",
+      "description": "set_budget() upserts by (user, category, month), so if the user (or a prior rollover) already set a budget for the target month, calling set_budget here overwrites it completely with from_month's limit + carry, discarding whatever limit was already configured for the next month instead of adding the rollover to it. This causes silent data loss of user-configured budgets."
+    },
+    {
+      "file": "tests/test_ledgerly.py",
+      "line": 107,
+      "category": "test-adequacy",
+      "severity": "major",
+      "title": "test_rollover has a vacuous assertion",
+      "description": "assert len(status) >= 0 is always true regardless of behavior, so the test does not verify the rollover actually happened, that the target month is correct, or that the new limit equals the original limit plus unspent amount. The test would pass even if rollover_budgets did nothing at all."
+    },
+    {
+      "file": "tests/test_ledgerly.py",
+      "line": 102,
+      "category": "test-adequacy",
+      "severity": "major",
+      "title": "No test covers the December-to-January year rollover",
+      "description": "The only rollover test uses month '2026-03', which never exercises the year-boundary case handled by next_month(). Given the year-rollover bug in utils.py, a test using a December from_month would have caught the defect, but no such test exists."
+    }
+  ],
+  "seconds": 31.7,
+  "cost_usd": 0.0470468,
+  "num_turns": 1
+}

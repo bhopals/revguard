@@ -1,0 +1,32 @@
+{
+  "id": "case04_token_refresh",
+  "title": "Sliding session expiry via token refresh",
+  "pr_description": "Adds refresh_token() so clients can extend a session without re-entering a password. Includes a test for the new endpoint.",
+  "clean": false,
+  "defects": [
+    {
+      "id": "c04-d1",
+      "file": "ledgerly/auth.py",
+      "anchor": "\"UPDATE tokens SET expires_at = ?\",",
+      "category": "security",
+      "severity": "critical",
+      "description": "The UPDATE has no WHERE clause, so refreshing one session extends the expiry of every token in the system, including other users' sessions."
+    },
+    {
+      "id": "c04-d2",
+      "file": "ledgerly/auth.py",
+      "anchor": "new_expiry = datetime.now() + timedelta(hours=TOKEN_TTL_HOURS)",
+      "category": "correctness",
+      "severity": "major",
+      "description": "Uses naive local time instead of timezone.utc. The stored naive ISO string later makes authenticate() compare naive vs aware datetimes and raise TypeError, breaking every refreshed session on next use."
+    },
+    {
+      "id": "c04-d3",
+      "file": "tests/test_ledgerly.py",
+      "anchor": "assert auth.refresh_token(db, token) == token",
+      "category": "test-adequacy",
+      "severity": "major",
+      "description": "The added test only asserts refresh_token returns the token. It never authenticates afterwards or checks the expiry moved, so it passes despite both bugs above."
+    }
+  ]
+}

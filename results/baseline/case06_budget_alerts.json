@@ -1,0 +1,41 @@
+{
+  "case": "case06_budget_alerts",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/reports.py",
+      "line": 73,
+      "category": "correctness",
+      "severity": "critical",
+      "title": "Integer division truncates before multiplying by 100",
+      "description": "`spent // b[\"limit_cents\"] * 100` performs integer division first, so pct is 0 for any spend below 100% of the limit (e.g. spent=8000, limit=10000 gives pct=0 instead of 80). This makes the alert essentially only fire once spend has reached at least the full budget (>=100%, since anything below rounds to 0), defeating the purpose of an early warning at 80%. Should be `spent * 100 // limit_cents` or use float division."
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 74,
+      "category": "correctness",
+      "severity": "major",
+      "title": "Threshold comparison excludes the boundary",
+      "description": "The description says alerts should fire for categories that have 'reached' the threshold percentage, implying >=, but the code uses `pct > threshold_pct`, so a category exactly at 80% (or exactly at 100%, i.e. exactly over budget) is not flagged."
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 72,
+      "category": "robustness",
+      "severity": "major",
+      "title": "Division by zero when budget limit is 0",
+      "description": "If a budget row has `limit_cents == 0`, computing `spent // b[\"limit_cents\"]` raises ZeroDivisionError, crashing the report instead of handling the edge case (e.g. treating any spend as immediately over budget)."
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 62,
+      "category": "test-adequacy",
+      "severity": "major",
+      "title": "No tests for budget_alerts",
+      "description": "The PR adds a new public function `budget_alerts` with threshold logic, percentage math, and a configurable parameter, but no tests are included to verify correct behavior, the default threshold, custom thresholds, or edge cases like zero-limit budgets or spend exactly at the threshold."
+    }
+  ],
+  "seconds": 10.6,
+  "cost_usd": 0.0209528,
+  "num_turns": 1
+}
