@@ -1,0 +1,47 @@
+{
+  "case": "case10_note_search",
+  "system": "agent-v2",
+  "findings": [
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 68,
+      "category": "security",
+      "title": "SQL injection via unsanitized `sort` parameter",
+      "severity": "critical",
+      "description": "The `sort` argument is interpolated directly into the SQL string with an f-string (`f\" ORDER BY {sort} DESC\"`) instead of being parameterized or validated against an allow-list of column names. Since `search_expenses` is a public function likely reachable from user-facing search input (e.g., a sort-by query parameter), an attacker can pass a value like `sort=\"id; DROP TABLE expenses;--\"` or, more realistically for SQLite (which doesn't support stacked queries via the DB driver in most cases), a subquery-based payload such as `sort=\"(CASE WHEN (SELECT 1 FROM users WHERE password_hash LIKE 'a%') THEN spent_on ELSE id END)\"` to perform boolean/blind SQL injection and exfiltrate data from other tables (e.g., other users' password hashes), bypassing the user_id scoping entirely. Unlike every other query in this file, which uses parameterized placeholders (`?`), this is the only place where caller-controlled input is spliced into the SQL text, and there is no validation that `sort` is one of a fixed set of legitimate column names.",
+      "reviewer": "security"
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 63,
+      "category": "test-adequacy",
+      "severity": "major",
+      "title": "No test coverage added for search_expenses()",
+      "description": "The PR adds a new public function `search_expenses(db, user_id, text, sort=\"spent_on\")` (ledgerly/expenses.py:63-70) but tests/test_ledgerly.py's TestExpenses class (the only test file in the repo) has no test exercising it at all \u2014 no test verifies note-substring matching, user_id scoping/ownership isolation (unlike test_ownership_enforced for get_expense), the `sort` parameter's effect on ordering, or behavior with an empty/no-match result. Because `sql` builds the ORDER BY clause via an f-string interpolating the caller-supplied `sort` argument directly (line 68), an absent test also fails to catch that passing an untrusted or malformed `sort` value produces a broken/injectable SQL string \u2014 a case a single parametrized test would have caught immediately (e.g. sort='id; DROP TABLE expenses--' or sort='nonexistent_col' raising sqlite3.OperationalError). As written, CI passes with zero verification that the newly shipped feature works or is scoped correctly per user.",
+      "reviewer": "tests"
+    }
+  ],
+  "raw_finding_count": 3,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 1,
+      "seconds": 18.4,
+      "cost_usd": 0.034587599999999996
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 1,
+      "seconds": 11.1,
+      "cost_usd": 0.0276938
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 1,
+      "seconds": 32.4,
+      "cost_usd": 0.08524319999999999
+    }
+  ],
+  "seconds": 32.4,
+  "cost_usd": 0.1475
+}

@@ -1,0 +1,28 @@
+{
+  "case": "case05_new_categories",
+  "system": "agent-v2",
+  "findings": [],
+  "raw_finding_count": 0,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 0,
+      "seconds": 22.4,
+      "cost_usd": 0.06771339999999999
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 0,
+      "seconds": 8.4,
+      "cost_usd": 0.0234852
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 0,
+      "seconds": 17.9,
+      "cost_usd": 0.05573020000000001
+    }
+  ],
+  "seconds": 22.4,
+  "cost_usd": 0.1469
+}

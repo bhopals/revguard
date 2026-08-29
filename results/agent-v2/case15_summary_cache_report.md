@@ -1,0 +1,23 @@
+# Code review: Cache monthly summaries
+
+> monthly_summary is the hottest query in the dashboard, so cache its result per (user, month). Includes a test showing the cache returns consistent results.
+
+**Verdict: request changes.** 3 blocking finding(s), 2 critical.
+
+## 1. [CRITICAL] Stale cache: monthly_summary never invalidated after expenses change, causing wrong totals and wrong budget_status
+
+`ledgerly/reports.py:32` — correctness
+
+_summary_cache is a module-level dict keyed only on (user_id, month) that is populated on first call and never invalidated. expenses.add_expense/delete_expense (ledgerly/expenses.py) and reports.set_budget perform no cache eviction. Concrete scenario: dashboard calls monthly_summary(db, user, '2026-03') which caches {'food': 100}; the user then adds another $50 food expense for March via add_expense; the dashboard reloads and calls monthly_summary(db, user, '2026-03') again, but instead of querying the DB it returns the stale cached {'food': 100}, silently dropping the new expense from the displayed total. Because budget_status (line 52) calls monthly_summary internally, this also makes 'spent', 'remaining', and 'over_budget' in budget_status stale/wrong after any new expense is added for a month that was previously summarized (e.g. a user who is now over budget will still show under_budget). The PR's own docstring claim that data is only stale 'within a session' is not enforced anywhere — there is no session boundary, TTL, or invalidation, so the cache is stale for the lifetime of the process across all requests/users. The included test only checks that two consecutive calls with no intervening writes return equal results, which does not exercise the invalidation gap and therefore does not catch this regression.
+
+## 2. [CRITICAL] Process-global cache keyed only by user_id leaks financial data across separate databases/tenants
+
+`ledgerly/reports.py:22` — security
+
+`_summary_cache` is a module-level dict shared by the whole process and keyed only by `(user_id, month)` at line 31, with no reference to which `db`/`Database` instance produced the cached rows. `db.py`'s `Database(path=...)` is designed to be instantiated per connection (e.g. per SQLite file/tenant, or a fresh in-memory DB in tests), and `user_id` is an autoincrement integer that restarts at 1 for every fresh database. Every other query in this codebase (see `expenses.py` get_expense/delete_expense/list_expenses) scopes access by executing against the caller-supplied `db` connection AND filtering by `user_id`; this cache silently drops the 'which db' half of that scoping. Concrete failure: two independent Database instances (e.g. two tenants' SQLite files, or two test/session contexts) each have a user with id=1. User A calls monthly_summary(dbA, 1, '2026-05') and gets cached. Later, an unrelated caller does monthly_summary(dbB, 1, '2026-05') for a completely different person/tenant with id=1 in dbB — the cache hit at line 32-33 returns dbA's totals without ever touching dbB, leaking one user's category spending totals to another. This is demonstrated in the repo itself: the test suite creates a fresh `Database()` per test (`tests/test_ledgerly.py` `db` fixture) so `user_id` is 1 in nearly every test; `TestReports.test_monthly_summary` and the new `test_summary_cache_consistent` both use month strings that could collide across test runs/order, and in a long-lived server process serving multiple tenants/sessions with separate Database objects this becomes a straightforward cross-account data disclosure with no invalidation or expiry.
+
+## 3. [?] Cache test cannot detect stale-cache bug it's meant to cover
+
+`tests/test_ledgerly.py:109` — test-adequacy
+
+test_summary_cache_consistent (lines 109-113) only asserts that two back-to-back calls to monthly_summary with unchanged data return equal dicts. Since monthly_summary is a pure query over unchanged expense rows, this assertion would pass identically whether or not the new caching logic exists at all — the test never distinguishes cached from uncached behavior. It fails to exercise the actual risky new behavior introduced by the PR: the module-level _summary_cache in ledgerly/reports.py (line 22) has no invalidation, so if an expense is added after the first monthly_summary call for the same (user, month), a second call returns the stale pre-add totals. A meaningful test would call monthly_summary, add another expense in the same user/month, call it again, and check the (buggy) stale result or verify invalidation — as written, the test gives false confidence that caching 'works' while leaving the staleness defect completely unverified.

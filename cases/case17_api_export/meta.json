@@ -1,0 +1,34 @@
+{
+  "id": "case17_api_export",
+  "title": "CSV export endpoint + household API",
+  "pr_description": "Adds GET /export (download expenses as CSV), and first household endpoints: GET /household/balances and POST /household/expenses. Also tidies the handler layer: field validation renamed to _require_fields and route registrations grouped by resource.",
+  "clean": false,
+  "tier": 3,
+  "repo": "target_repo_pro",
+  "defects": [
+    {
+      "id": "c17-d1",
+      "file": "ledgerly/api.py",
+      "anchor": "lines.append(f\"{r['spent_on']},{r['category']},{amount},{r['note']}\")",
+      "category": "correctness",
+      "severity": "major",
+      "description": "CSV rows are built by joining raw values with commas and no quoting/escaping. Any note containing a comma, quote or newline (notes are free text up to 500 chars) shifts columns and corrupts the export. Must use the csv module."
+    },
+    {
+      "id": "c17-d2",
+      "file": "ledgerly/api.py",
+      "anchor": "net = household.balances(db, hid)",
+      "category": "security",
+      "severity": "critical",
+      "description": "GET /household/balances never verifies the requester belongs to the household (household.require_member exists for exactly this, and POST /household/expenses inherits the check via add_shared_expense's paid_by). Any authenticated user can enumerate household_id values and read other households' member balances."
+    },
+    {
+      "id": "c17-d3",
+      "file": "ledgerly/api.py",
+      "anchor": "cents = int(float(request.body[\"amount\"]) * 100)",
+      "category": "correctness",
+      "severity": "major",
+      "description": "POST /household/expenses converts the amount via float, losing cents ('19.99' -> 1998) and accepting junk like '1e3' or negatives, while POST /expenses five routes up uses parse_money. Inconsistent and wrong for money."
+    }
+  ]
+}

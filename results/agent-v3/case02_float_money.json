@@ -1,0 +1,80 @@
+{
+  "case": "case02_float_money",
+  "system": "agent-v3",
+  "findings": [
+    {
+      "file": "ledgerly/utils.py",
+      "line": 20,
+      "category": "correctness",
+      "severity": "critical",
+      "title": "Float rounding causes wrong cent amounts",
+      "description": "int(dollars * 100) truncates a binary float rather than rounding a decimal value. Many common two-decimal amounts are not exactly representable in binary floating point and land just below the intended value, so truncation loses a cent. E.g. parse_money(\"0.29\") -> float(\"0.29\")*100 == 28.999999999999996 -> int(...) == 28 (should be 29 cents); parse_money(\"19.99\") -> 19.99*100 == 1998.9999999999998 -> int(...) == 1998 (should be 1999 cents). Since this is a ledger app that stores amount_cents used for balances/reports, every such input silently records one cent less than the user entered, and the error is systematic (always rounds down) rather than random, so it accumulates. The old regex-based implementation parsed the integer and fractional digits directly and never touched floating point, so this is a regression introduced by the PR, not a pre-existing issue.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/utils.py:20, confirms `int(dollars * 100)` with no rounding. Executed the function directly: parse_money('0.29') returns 28 (should be 29) and parse_money('19.99') returns 1998 (should be 1999), reproducing the exact failure described. This is a genuine regression versus the old regex-based digit parsing which never touched floating point.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "ledgerly/utils.py",
+      "line": 15,
+      "category": "correctness",
+      "severity": "major",
+      "title": "parse_money no longer rejects negative or zero amounts",
+      "description": "The old implementation explicitly rejected totals <= 0 (docstring: \"Raises ValueError on malformed input or negative/zero amounts\"), and the removed test asserted parse_money(\"-5\") raised ValueError. The new implementation drops that check entirely and its docstring was edited to remove the guarantee: parse_money(\"-5\") now returns -500, and parse_money(\"0\") returns 0, both silently accepted instead of raising. Any caller that relied on parse_money to enforce a positive amount invariant (e.g. rejecting a $0 or negative expense entry at the input-validation boundary) will now let invalid data through unvalidated, since the contract stated in the function's own docstring was silently weakened.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Ran parse_money('-5') and parse_money('0') directly against the post-PR ledgerly/utils.py; both returned -500 and 0 respectively instead of raising ValueError. Diff confirms the `if total <= 0: raise ValueError(...)` check was removed and the docstring was edited from 'malformed input or negative/zero amounts' to just 'malformed input', and the corresponding test case for '-5' was deleted from tests/test_ledgerly.py. No other in-repo caller currently exists to compensate, so the validation guarantee documented by the function is genuinely gone.",
+        "adjusted_severity": "major"
+      }
+    },
+    {
+      "file": "tests/test_ledgerly.py",
+      "line": 28,
+      "category": "test-adequacy",
+      "title": "Removed regression-catching assertions for negative and over-precision amounts",
+      "severity": "major",
+      "description": "The old test_parse_money_rejects_garbage asserted that '-5' and '12.345' raise ValueError. The PR deletes these two cases from the list instead of keeping them, which is the only reason the test still passes: the new float()-based parse_money no longer rejects negative amounts (parse_money('-5') now returns -500 instead of raising) nor over-precision fractions (parse_money('12.345') now returns 1234 via truncation instead of raising, since int(12.345*100) truncates rather than validating 2-decimal precision). By quietly dropping these cases rather than updating them to reflect intentionally new behavior, the test suite loses its ability to catch this regression, and the docstring change ('Raises ValueError on malformed input.' with 'negative/zero amounts' wording removed) is not accompanied by any test asserting the new, weaker contract, so nothing in the suite documents or verifies what happens for negative/zero/high-precision inputs anymore.",
+      "reviewer": "tests",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Ran parse_money('-5') and parse_money('12.345') against post-PR ledgerly/utils.py: they return -500 and 1234 respectively instead of raising ValueError, confirming the new float()-based implementation silently accepts negative and over-precision amounts. Ran the full test suite (pytest tests/test_ledgerly.py -v): all 16 tests pass, including test_parse_money_rejects_garbage, because the PR removed '-5' and '12.345' from the garbage list rather than updating expectations to match the new lax behavior. No other test or code asserts the new contract for negative/zero/over-precision inputs.",
+        "adjusted_severity": "major"
+      }
+    }
+  ],
+  "raw_finding_count": 3,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 2,
+      "seconds": 50.9,
+      "cost_usd": 0.09144300000000001
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 0,
+      "seconds": 85.9,
+      "cost_usd": 0.19316239999999998
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 1,
+      "seconds": 15.1,
+      "cost_usd": 0.040164599999999995
+    },
+    {
+      "stage": "verifier",
+      "in": 3,
+      "confirmed": 3,
+      "seconds": 13.4
+    }
+  ],
+  "seconds": 99.3,
+  "cost_usd": 0.4299
+}

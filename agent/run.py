@@ -23,18 +23,27 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from agent.runtime import AgentError, extract_json, run_agent  # noqa: E402
-from agent.prompts.specialists import SPECIALISTS  # noqa: E402
+from agent.prompts.specialists import SPECIALISTS, SPECIALISTS_V2  # noqa: E402
 from tools.case_utils import build_workdir, list_cases, load_meta, make_diff  # noqa: E402
 
-COMMON_PROMPT = (ROOT / "agent" / "prompts" / "reviewer_common.md").read_text()
-VERIFIER_PROMPT = (ROOT / "agent" / "prompts" / "verifier.md").read_text()
+PROMPTS = ROOT / "agent" / "prompts"
+VERIFIER_PROMPT = (PROMPTS / "verifier.md").read_text()
 
+# `common` picks the base reviewer brief: reviewer_common.md is the original
+# conservative calibration (v1-v4, kept frozen for reproducibility);
+# reviewer_common_v2.md is the recall-tuned calibration introduced in v5
+# after measuring that conservative reviewers starve the verifier.
 CONFIGS = {
-    "v1": {"specialists": ["generalist"], "verify": False},
-    "v2": {"specialists": ["correctness", "security", "tests"], "verify": False},
-    "v3": {"specialists": ["correctness", "security", "tests"], "verify": True},
+    "v1": {"specialists": ["generalist"], "verify": False,
+           "common": "reviewer_common.md"},
+    "v2": {"specialists": ["correctness", "security", "tests"], "verify": False,
+           "common": "reviewer_common.md"},
+    "v3": {"specialists": ["correctness", "security", "tests"], "verify": True,
+           "common": "reviewer_common.md"},
     "v4": {"specialists": ["correctness", "security", "tests", "nitpick"],
-           "verify": True},
+           "verify": True, "common": "reviewer_common.md"},
+    "v5": {"specialists": ["correctness", "security", "tests"], "verify": True,
+           "common": "reviewer_common_v2.md", "specialist_set": "v2"},
 }
 
 REVIEW_TASK = """Review this pull request.
@@ -76,14 +85,16 @@ def dedupe(findings):
     return kept
 
 
-def run_specialist(name, meta, diff, files, workdir, traj_dir):
+def run_specialist(name, common_prompt, title, description, diff, files,
+                   workdir, traj_dir, specialist_set="v1"):
+    briefs = SPECIALISTS_V2 if specialist_set == "v2" else SPECIALISTS
     prompt = REVIEW_TASK.format(
-        title=meta["title"], description=meta["pr_description"],
+        title=title, description=description,
         files=", ".join(files), diff=diff,
     )
     res = run_agent(
         prompt,
-        system_prompt=COMMON_PROMPT + "\n" + SPECIALISTS[name],
+        system_prompt=common_prompt + "\n" + briefs[name],
         cwd=workdir,
         allowed_tools=("Read", "Grep", "Glob"),
         trajectory_path=Path(traj_dir) / f"reviewer_{name}.jsonl",
@@ -94,13 +105,13 @@ def run_specialist(name, meta, diff, files, workdir, traj_dir):
     return findings, res
 
 
-def run_verifier(finding, meta, diff, case_dir, traj_dir, idx):
+def run_verifier(finding, title, diff, make_sandbox, traj_dir, idx):
     """Each verification runs in a FRESH copy of the repo so one verifier's
     scratch files or edits can never contaminate another's evidence."""
     with tempfile.TemporaryDirectory() as tmp:
-        work = build_workdir(case_dir, Path(tmp) / "repo")
+        work = make_sandbox(Path(tmp) / "repo")
         prompt = VERIFY_TASK.format(
-            title=meta["title"],
+            title=title,
             finding=json.dumps(finding, indent=2),
             diff=diff,
         )
@@ -115,15 +126,14 @@ def run_verifier(finding, meta, diff, case_dir, traj_dir, idx):
     return verdict, res
 
 
-def review_case(case_dir, config_name, out_root, traj_root, work_root):
+def review_diff(config_name, title, description, diff, files, workdir,
+                make_sandbox, traj_dir):
+    """Run the full pipeline on one diff. Transport-agnostic core shared by
+    the benchmark runner and the real-repo CLI. Returns a result dict."""
     cfg = CONFIGS[config_name]
-    meta = load_meta(case_dir)
-    diff = make_diff(case_dir)
-    from tools.case_utils import changed_files
-    files = changed_files(case_dir)
-    traj_dir = Path(traj_root) / meta["id"]
+    common_prompt = (PROMPTS / cfg["common"]).read_text()
+    traj_dir = Path(traj_dir)
     traj_dir.mkdir(parents=True, exist_ok=True)
-    workdir = build_workdir(case_dir, Path(work_root) / meta["id"])
 
     total_cost, total_seconds = 0.0, 0.0
     stage_meta = []
@@ -132,7 +142,9 @@ def review_case(case_dir, config_name, out_root, traj_root, work_root):
     all_findings = []
     with ThreadPoolExecutor(max_workers=4) as pool:
         futs = {
-            pool.submit(run_specialist, name, meta, diff, files, workdir, traj_dir): name
+            pool.submit(run_specialist, name, common_prompt, title,
+                        description, diff, files, workdir, traj_dir,
+                        cfg.get("specialist_set", "v1")): name
             for name in cfg["specialists"]
         }
         for fut in futs:
@@ -140,7 +152,7 @@ def review_case(case_dir, config_name, out_root, traj_root, work_root):
             try:
                 findings, res = fut.result()
             except AgentError as e:
-                print(f"  [{meta['id']}] reviewer {name} FAILED: {e}")
+                print(f"  [{title}] reviewer {name} FAILED: {e}")
                 stage_meta.append({"stage": f"reviewer_{name}", "error": str(e)})
                 continue
             all_findings += findings
@@ -159,7 +171,8 @@ def review_case(case_dir, config_name, out_root, traj_root, work_root):
         confirmed = []
         with ThreadPoolExecutor(max_workers=4) as pool:
             futs = {
-                pool.submit(run_verifier, f, meta, diff, case_dir, traj_dir, i): (i, f)
+                pool.submit(run_verifier, f, title, diff, make_sandbox,
+                            traj_dir, i): (i, f)
                 for i, f in enumerate(merged)
             }
             for fut in futs:
@@ -167,8 +180,10 @@ def review_case(case_dir, config_name, out_root, traj_root, work_root):
                 try:
                     verdict, res = fut.result()
                 except AgentError as e:
-                    print(f"  [{meta['id']}] verifier {i} FAILED ({e}); keeping finding unverified")
-                    f["verification"] = {"verdict": "UNVERIFIED", "evidence": str(e)}
+                    print(f"  [{title}] verifier {i} FAILED ({e});"
+                          " keeping finding unverified")
+                    f["verification"] = {"verdict": "UNVERIFIED",
+                                         "evidence": str(e)}
                     confirmed.append(f)
                     continue
                 total_cost += res["cost_usd"] or 0
@@ -186,21 +201,39 @@ def review_case(case_dir, config_name, out_root, traj_root, work_root):
     else:
         final = merged
 
-    out = {
-        "case": meta["id"],
-        "system": f"agent-{config_name}",
+    return {
         "findings": final,
         "raw_finding_count": len(all_findings),
+        "merged_count": len(merged),
         "stages": stage_meta,
         "seconds": round(total_seconds, 1),
         "cost_usd": round(total_cost, 4),
     }
+
+
+def review_case(case_dir, config_name, out_root, traj_root, work_root):
+    from tools.case_utils import changed_files
+    meta = load_meta(case_dir)
+    diff = make_diff(case_dir)
+    files = changed_files(case_dir)
+    workdir = build_workdir(case_dir, Path(work_root) / meta["id"])
+
+    result = review_diff(
+        config_name, meta["title"], meta["pr_description"], diff, files,
+        workdir, lambda dest: build_workdir(case_dir, dest),
+        Path(traj_root) / meta["id"],
+    )
+    out = {"case": meta["id"], "system": f"agent-{config_name}", **result}
     out_dir = Path(out_root)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"{meta['id']}.json").write_text(json.dumps(out, indent=2))
-    write_report(out_dir / f"{meta['id']}_report.md", meta, final, config_name)
-    print(f"{meta['id']}: {len(all_findings)} raw -> {len(merged)} merged"
-          f" -> {len(final)} final ({out['seconds']}s, ${out['cost_usd']:.2f})")
+    write_report(out_dir / f"{meta['id']}_report.md", meta, out["findings"],
+                 config_name)
+    from agent.html_report import write_html_report
+    write_html_report(out_dir / f"{meta['id']}_report.html", meta, out)
+    print(f"{meta['id']}: {out['raw_finding_count']} raw"
+          f" -> {out['merged_count']} merged -> {len(out['findings'])} final"
+          f" ({out['seconds']}s, ${out['cost_usd']:.2f})")
     shutil.rmtree(workdir, ignore_errors=True)
 
 

@@ -1,0 +1,42 @@
+{
+  "id": "case22_notifications_api",
+  "title": "Notifications API + weekly digest job",
+  "pr_description": "Exposes notifications over the API (list unread, mark read) and adds send_weekly_digests(), the scheduled job that mails every user a spending digest for the month and tidies up their notification list.",
+  "clean": false,
+  "tier": 3,
+  "repo": "target_repo_pro",
+  "defects": [
+    {
+      "id": "c22-d1",
+      "file": "ledgerly/api.py",
+      "anchor": "uid = int(request.params.get(\"user_id\", request.user_id))",
+      "category": "security",
+      "severity": "critical",
+      "description": "GET /notifications honors a user_id query parameter over the authenticated user — a debugging convenience left in. Any logged-in user can read any other user's notifications (which contain their budget and spending details) by passing ?user_id=N."
+    },
+    {
+      "id": "c22-d2",
+      "file": "ledgerly/notify.py",
+      "anchor": "\"UPDATE notifications SET read_at = ? WHERE user_id = ?\",",
+      "category": "correctness",
+      "severity": "major",
+      "description": "After queuing a digest the job marks ALL of the user's notifications read — not just digests. Any unread over-budget alert the user hasn't seen yet is silently swallowed by the weekly job. The update must filter on kind = 'digest' (or better, only the row it just created)."
+    },
+    {
+      "id": "c22-d3",
+      "file": "ledgerly/api.py",
+      "anchor": "\"UPDATE notifications SET read_at = ? WHERE id = ?\",",
+      "category": "security",
+      "severity": "major",
+      "description": "POST /notifications/read updates by notification id alone, bypassing notify.mark_read's user scoping that exists precisely for this. Any user can mark any other user's notifications read (suppressing their over-budget alerts) by guessing ids."
+    },
+    {
+      "id": "c22-d4",
+      "file": "tests/test_notify.py",
+      "anchor": "assert any(n[\"kind\"] == \"digest\" for n in unread(db, user)) or True",
+      "category": "test-adequacy",
+      "severity": "major",
+      "description": "The added digest test is unfalsifiable: 'or True' makes the first assertion a tautology and the second ('count <= 1') passes on an empty list. It therefore never notices that digests are queued already-read (the job's own UPDATE swallows them), which is why CI stays green."
+    }
+  ]
+}

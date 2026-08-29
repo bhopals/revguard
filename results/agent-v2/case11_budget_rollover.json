@@ -1,0 +1,47 @@
+{
+  "case": "case11_budget_rollover",
+  "system": "agent-v2",
+  "findings": [
+    {
+      "file": "ledgerly/utils.py",
+      "line": 51,
+      "category": "correctness",
+      "title": "next_month does not roll over the year for December",
+      "severity": "critical",
+      "description": "next_month(\"2026-12\") computes int(\"12\")+1=13 and returns \"2026-13\", an invalid month key instead of \"2027-01\". This is called from rollover_budgets (ledgerly/reports.py:65). Any user who runs rollover for a December budget gets a budget row inserted with month=\"2026-13\". Since all other month keys are produced by month_of() (ledgerly/utils.py:46-48) via real date objects, \"2026-13\" can never equal a real spent_on month (reports.py:27 uses substr(spent_on,1,7)) nor be looked up by any legitimate budget_status(db, user_id, month) call (reports.py:43) \u2014 the rolled-over budget becomes permanently orphaned/inaccessible, silently losing the carried-over funds for that category with no error raised.",
+      "reviewer": "correctness"
+    },
+    {
+      "file": "tests/test_ledgerly.py",
+      "line": 108,
+      "category": "test-adequacy",
+      "title": "test_rollover asserts a tautology and never verifies rollover behavior",
+      "severity": "major",
+      "description": "The only assertion is `assert len(status) >= 0`, which is always true since `len()` can never be negative. The test does not check that `rollover_budgets` created a budget in the target month, that the new limit equals original_limit + unspent carry (10000 + 6000 = 16000 in this scenario), or that the returned `target` month string is correct ('2026-04'). As written, this test would still pass even if `rollover_budgets` did nothing at all, wrote the wrong limit, wrote to the wrong month, or raised no error while silently corrupting data. It provides no regression protection for the new feature.",
+      "reviewer": "tests"
+    }
+  ],
+  "raw_finding_count": 3,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 1,
+      "seconds": 30.0,
+      "cost_usd": 0.0732032
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 0,
+      "seconds": 32.5,
+      "cost_usd": 0.0931432
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 2,
+      "seconds": 25.3,
+      "cost_usd": 0.06399980000000001
+    }
+  ],
+  "seconds": 32.5,
+  "cost_usd": 0.2303
+}

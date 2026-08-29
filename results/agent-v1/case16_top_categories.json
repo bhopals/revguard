@@ -1,0 +1,35 @@
+{
+  "case": "case16_top_categories",
+  "system": "agent-v1",
+  "findings": [
+    {
+      "file": "ledgerly/reports.py",
+      "line": 65,
+      "category": "correctness",
+      "title": "Categories ranked by lexicographic string comparison, not by amount",
+      "severity": "critical",
+      "description": "The sort key is `format_money(kv[1])`, a formatted string like \"$12.50\", not the numeric cents value. Python compares these strings character-by-character, so amounts with different numbers of digits before the decimal point sort incorrectly: e.g. spend of $9.00 vs $100.00 produces key strings \"$9.00\" and \"$100.00\"; lexicographically \"$9\" > \"$1\", so with reverse=True the $9.00 category is ranked above the $100.00 category even though it is more than ten times smaller. Any month where the top categories' totals differ in digit-count of the dollar part (e.g. $8.xx vs $10.xx, $99.xx vs $100.xx) will produce a wrong 'top n' list on the dashboard widget, which is the entire purpose of this function. This is untested (no test references top_categories in the suite) so CI does not catch it.",
+      "reviewer": "generalist"
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 61,
+      "category": "correctness",
+      "title": "Docstring claims alphabetical tie-break, but implementation does not sort alphabetically",
+      "severity": "minor",
+      "description": "The docstring states 'Ties are broken alphabetically for stable rendering,' but the sort key only depends on the formatted spend amount, never the category name. When two categories have equal spend, Python's stable sort preserves their relative order from `spend.items()`, which comes from `monthly_summary`'s SQL query (`ORDER BY total DESC`) \u2014 an order that is not alphabetical and not guaranteed stable across equal totals by SQLite. Callers relying on the documented alphabetical tie-break for consistent widget rendering across requests/deployments will see non-alphabetical, potentially unstable ordering for tied categories.",
+      "reviewer": "generalist"
+    }
+  ],
+  "raw_finding_count": 2,
+  "stages": [
+    {
+      "stage": "reviewer_generalist",
+      "findings": 2,
+      "seconds": 42.2,
+      "cost_usd": 0.0770808
+    }
+  ],
+  "seconds": 42.2,
+  "cost_usd": 0.0771
+}

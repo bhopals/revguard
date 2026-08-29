@@ -26,6 +26,13 @@ def load_meta(case_dir):
     return json.loads((Path(case_dir) / "meta.json").read_text())
 
 
+def target_repo_for(case_dir):
+    """Tier 1/2 cases review target_repo; tier 3 reviews target_repo_pro
+    (meta's `repo` field). Separate frozen repos keep earlier comparisons
+    valid as the project grows."""
+    return ROOT / load_meta(case_dir).get("repo", "target_repo")
+
+
 def list_cases():
     return sorted(p for p in CASES_DIR.iterdir() if (p / "meta.json").exists())
 
@@ -45,7 +52,8 @@ def build_workdir(case_dir, dest):
     dest = Path(dest)
     if dest.exists():
         shutil.rmtree(dest)
-    shutil.copytree(TARGET_REPO, dest, ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copytree(target_repo_for(case_dir), dest,
+                    ignore=shutil.ignore_patterns("__pycache__"))
     changed_root = Path(case_dir) / "changed"
     for rel in changed_files(case_dir):
         target = dest / rel
@@ -58,8 +66,9 @@ def make_diff(case_dir):
     """Unified diff of the PR: target_repo -> target_repo + changed/."""
     chunks = []
     changed_root = Path(case_dir) / "changed"
+    repo = target_repo_for(case_dir)
     for rel in changed_files(case_dir):
-        old_path = TARGET_REPO / rel
+        old_path = repo / rel
         old = old_path.read_text().splitlines(keepends=True) if old_path.exists() else []
         new = (changed_root / rel).read_text().splitlines(keepends=True)
         diff = difflib.unified_diff(
