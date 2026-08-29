@@ -282,7 +282,11 @@ def write_report(path, meta, findings, config_name):
             ]
             ver = f.get("verification")
             if ver:
-                lines += ["", f"*Verified: {ver.get('evidence', '')[:400]}*"]
+                ev = str(ver.get("evidence", ""))
+                if len(ev) > 700:
+                    cut = ev[:700]
+                    ev = cut[:cut.rfind(". ") + 1] if ". " in cut else cut + "…"
+                lines += ["", f"*Verified: {ev}*"]
             lines.append("")
     Path(path).write_text("\n".join(lines))
 
