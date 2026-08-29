@@ -8,12 +8,21 @@ Examples:
   # Review a branch or PR head against its merge base:
   python3 revguard.py --repo ~/code/myproject --base main --head feature/x
 
+  # Review a GitHub pull request (clones to a temp dir; needs gh or a
+  # public repo), optionally posting the review back as a PR comment:
+  python3 revguard.py --pr https://github.com/owner/repo/pull/123
+  python3 revguard.py --pr owner/repo#123 --post-comment
+
+  # Same diff through the one-prompt baseline, for fair comparisons:
+  python3 revguard.py --pr owner/repo#123 --baseline
+
 Output goes to ./reviews/<repo>-<timestamp>/: findings.json, report.md,
 report.html, and the full agent trajectories.
 """
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -24,7 +33,61 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 from agent.run import review_diff, write_report  # noqa: E402
+from agent.runtime import extract_json, run_agent  # noqa: E402
 from agent.html_report import write_html_report  # noqa: E402
+
+BASELINE_PROMPT = """You are reviewing a pull request.
+
+PR title: {title}
+PR description: {description}
+
+Review the diff below and report every genuine defect you find (bugs, security vulnerabilities, robustness problems, inadequate tests). Do not report style nits.
+
+Respond with ONLY a JSON object in this exact schema:
+{{"findings": [{{"file": "path/relative/to/repo", "line": <line number in the new version of the file>, "category": "correctness|security|robustness|test-adequacy", "severity": "critical|major|minor", "title": "<short>", "description": "<what is wrong and why it matters>"}}]}}
+
+If the diff has no defects, return {{"findings": []}}.
+
+--- DIFF ---
+{diff}
+"""
+
+_PR_RE = re.compile(
+    r"(?:https?://github\.com/)?([\w.-]+)/([\w.-]+?)(?:/pull/|#)(\d+)$")
+
+
+def parse_pr(spec):
+    m = _PR_RE.match(spec.strip())
+    if not m:
+        sys.exit(f"cannot parse PR spec: {spec!r}"
+                 " (expected owner/repo#N or a github.com PR URL)")
+    owner, repo, num = m.group(1), m.group(2), int(m.group(3))
+    return owner, repo, num
+
+
+def fetch_pr(owner, repo, num, dest):
+    """Clone the repo (partial) and fetch the PR head. Returns
+    (repo_path, base_ref, head_ref, title, description)."""
+    slug = f"{owner}/{repo}"
+    info = subprocess.run(
+        ["gh", "pr", "view", str(num), "--repo", slug,
+         "--json", "title,body,baseRefName,headRefOid"],
+        capture_output=True, text=True)
+    if info.returncode != 0:
+        sys.exit(f"gh pr view failed: {info.stderr.strip()}")
+    meta = json.loads(info.stdout)
+    repo_path = Path(dest) / repo
+    clone = subprocess.run(
+        ["git", "clone", "--filter=blob:none", "--no-checkout",
+         f"https://github.com/{slug}.git", str(repo_path)],
+        capture_output=True, text=True)
+    if clone.returncode != 0:
+        sys.exit(f"clone failed: {clone.stderr.strip()[-400:]}")
+    for ref in (f"pull/{num}/head:revguard-pr", meta["baseRefName"]):
+        subprocess.run(["git", "-C", str(repo_path), "fetch", "origin", ref],
+                       capture_output=True, text=True, check=True)
+    return (repo_path, f"origin/{meta['baseRefName']}", "revguard-pr",
+            meta["title"], meta.get("body") or "")
 
 
 def git(repo, *args):
@@ -57,13 +120,34 @@ def snapshot(repo, head, dest):
     return dest
 
 
+def run_baseline(title, description, diff, out_dir):
+    """One-prompt review of the same diff, same model, no tools."""
+    prompt = BASELINE_PROMPT.format(
+        title=title, description=description, diff=diff)
+    with tempfile.TemporaryDirectory() as empty:
+        res = run_agent(prompt, allowed_tools=(), cwd=empty,
+                        trajectory_path=Path(out_dir) / "trajectories"
+                        / "baseline.jsonl")
+    findings = extract_json(res["text"]).get("findings", [])
+    return {"findings": findings, "raw_finding_count": len(findings),
+            "merged_count": len(findings), "stages": [{"stage": "baseline"}],
+            "seconds": res["seconds"], "cost_usd": res["cost_usd"] or 0}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--repo", required=True, help="path to a git repository")
-    ap.add_argument("--base", required=True, help="base ref to diff against")
+    ap.add_argument("--repo", help="path to a local git repository")
+    ap.add_argument("--base", help="base ref to diff against (local mode)")
     ap.add_argument("--head", help="head ref (default: working tree)")
+    ap.add_argument("--pr", help="GitHub PR: owner/repo#N or a PR URL"
+                                 " (replaces --repo/--base/--head)")
     ap.add_argument("--config", default="v5",
                     help="pipeline config (default v5, the final one)")
+    ap.add_argument("--baseline", action="store_true",
+                    help="run the one-prompt baseline instead of the pipeline")
+    ap.add_argument("--post-comment", action="store_true",
+                    help="post the finished review as a PR comment"
+                         " (requires --pr and gh auth with write access)")
     ap.add_argument("--title", help="PR title (default: from last commit)")
     ap.add_argument("--description", default="", help="PR description")
     ap.add_argument("--out", default="reviews", help="output root")
@@ -71,45 +155,86 @@ def main():
                     help="limit the review to these pathspecs (e.g. src/"
                          " ':(exclude)vendor/'), passed to git diff")
     args = ap.parse_args()
+    if args.post_comment and not args.pr:
+        sys.exit("--post-comment requires --pr")
 
-    repo = Path(args.repo).expanduser().resolve()
-    if not (repo / ".git").exists():
-        sys.exit(f"{repo} is not a git repository")
+    tmp_clone = None
+    if args.pr:
+        owner, repo_name, num = parse_pr(args.pr)
+        tmp_clone = tempfile.mkdtemp(prefix="revguard-pr-")
+        repo, base, head, pr_title, pr_desc = fetch_pr(
+            owner, repo_name, num, tmp_clone)
+        args.title = args.title or pr_title
+        args.description = args.description or pr_desc[:2000]
+        run_label = f"{repo_name}-pr{num}"
+    else:
+        if not (args.repo and args.base):
+            sys.exit("either --pr or both --repo and --base are required")
+        repo = Path(args.repo).expanduser().resolve()
+        if not (repo / ".git").exists():
+            sys.exit(f"{repo} is not a git repository")
+        base, head = args.base, args.head
+        run_label = repo.name
 
-    rev_range = f"{args.base}...{args.head}" if args.head else args.base
-    pathspec = ["--"] + args.paths if args.paths else []
-    diff = git(repo, "diff", rev_range, *pathspec)
-    if not diff.strip():
-        sys.exit("no changes to review")
-    files = git(repo, "diff", "--name-only", rev_range, *pathspec).split()
-    title = args.title or git(
-        repo, "log", "-1", "--format=%s",
-        args.head or "HEAD").strip() or "Working tree changes"
+    try:
+        rev_range = f"{base}...{head}" if head else base
+        pathspec = ["--"] + args.paths if args.paths else []
+        diff = git(repo, "diff", rev_range, *pathspec)
+        if not diff.strip():
+            sys.exit("no changes to review")
+        files = git(repo, "diff", "--name-only", rev_range, *pathspec).split()
+        title = args.title or git(
+            repo, "log", "-1", "--format=%s", head or "HEAD"
+        ).strip() or "Working tree changes"
 
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    out_dir = Path(args.out) / f"{repo.name}-{stamp}"
-    out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        system = "baseline" if args.baseline else args.config
+        out_dir = Path(args.out) / f"{run_label}-{system}-{stamp}"
+        out_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Reviewing {repo.name} [{rev_range}]: {len(files)} files,"
-          f" {len(diff.splitlines())} diff lines (config {args.config})")
+        print(f"Reviewing {run_label} [{rev_range}]: {len(files)} files,"
+              f" {len(diff.splitlines())} diff lines ({system})")
 
-    with tempfile.TemporaryDirectory() as tmp:
-        workdir = snapshot(repo, args.head, Path(tmp) / "work")
-        result = review_diff(
-            args.config, title, args.description, diff, files, workdir,
-            lambda dest: snapshot(repo, args.head, dest),
-            out_dir / "trajectories",
-        )
+        if args.baseline:
+            result = run_baseline(title, args.description, diff, out_dir)
+        else:
+            with tempfile.TemporaryDirectory() as tmp:
+                workdir = snapshot(repo, head, Path(tmp) / "work")
+                result = review_diff(
+                    args.config, title, args.description, diff, files,
+                    workdir, lambda dest: snapshot(repo, head, dest),
+                    out_dir / "trajectories",
+                )
+    finally:
+        if tmp_clone:
+            shutil.rmtree(tmp_clone, ignore_errors=True)
 
     meta = {"title": title, "pr_description": args.description or rev_range}
     (out_dir / "findings.json").write_text(json.dumps(result, indent=2))
-    write_report(out_dir / "report.md", meta, result["findings"], args.config)
+    write_report(out_dir / "report.md", meta, result["findings"], system)
     write_html_report(out_dir / "report.html", meta, result)
     n = len(result["findings"])
     print(f"\n{n} confirmed finding(s)"
           f" ({result['raw_finding_count']} raw, {result['merged_count']}"
           f" after merge) in {result['seconds']}s, ${result['cost_usd']:.2f}")
     print(f"Report: {out_dir}/report.md (+ report.html, findings.json)")
+
+    if args.post_comment:
+        body = (out_dir / "report.md").read_text() + (
+            "\n\n---\n*Generated by [RevGuard]"
+            "(https://github.com/bhopals/revguard) — every finding above"
+            " survived an adversarial verification agent instructed to"
+            " disprove it.*\n")
+        body_file = out_dir / "comment.md"
+        body_file.write_text(body)
+        proc = subprocess.run(
+            ["gh", "pr", "comment", str(num), "--repo",
+             f"{owner}/{repo_name}", "--body-file", str(body_file)],
+            capture_output=True, text=True)
+        if proc.returncode != 0:
+            print(f"comment failed: {proc.stderr.strip()}")
+        else:
+            print(f"Posted review comment: {proc.stdout.strip()}")
 
 
 if __name__ == "__main__":
