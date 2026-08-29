@@ -131,6 +131,26 @@ experiment we removed for the opposite of the expected reason — is in
 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**. Every entry has measured
 numbers.
 
+## Use it on a real repository
+
+The benchmark proves the pipeline; `revguard.py` ships it:
+
+```bash
+python3 revguard.py --repo /path/to/repo --base main              # working tree
+python3 revguard.py --repo /path/to/repo --base main --head br    # a branch
+python3 revguard.py --repo . --base HEAD~1 --paths src/           # scoped
+```
+
+Output: `report.md`, a self-contained `report.html`, `findings.json`,
+and full trajectories, under `reviews/`. Dogfood result committed in
+this repo: RevGuard reviewed its own v5-hardening commit
+(`reviews/revguard-20260829-112851/`) and **approved it with zero
+findings** — the same discipline it shows on the benchmark's clean PRs,
+where no system run ever invented a finding. Dogfooding also caught two
+real CLI bugs before submission (prompts over argv hit the OS E2BIG
+limit on large diffs; generated files need pathspec scoping) — both
+fixed in the git history.
+
 ## Reproduction
 
 See [docs/REPRODUCTION.md](docs/REPRODUCTION.md). Short version:
