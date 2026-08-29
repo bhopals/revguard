@@ -148,8 +148,24 @@ eval/            fixed scoring rule + comparison table
 tools/           case utilities + benchmark validator
 results/         findings, reports, timing, cost (scoring input)
 trajectories/    full stream-json trajectory of every agent invocation
-docs/            reproduction guide
+docs/            reproduction guide, changelog, dashboard, video script
 ```
+
+### Representative trajectories (all rendered as .md beside the .jsonl)
+
+- `trajectories/agent-v5/case21_perf_reports/verifier_01.md` — the
+  verifier does not argue the reopen-crash is likely; it creates a
+  file-backed database, reopens it, gets the OperationalError, and greps
+  the test suite to explain why CI never sees it. 5 turns, $0.06.
+- `trajectories/agent-v5/case21_perf_reports/reviewer_correctness.md` —
+  a specialist walking the JOIN rewrite against the old query and
+  catching the lost month predicate.
+- `trajectories/agent-v3/case15_summary_cache/` — the truth-only
+  verifier era: executed reproductions of the stale cache (kept) but
+  also confirmations of advisory comments (the measured failure that
+  led to the policy gate).
+- `trajectories/baseline/case21_perf_reports.jsonl` — the baseline's
+  single-shot review of the same PR, for contrast.
 
 ## Main failure mode and hot take
 
