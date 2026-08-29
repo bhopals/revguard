@@ -1,0 +1,51 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Recurring rules: biweekly cadence and pause/resume</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Recurring rules: biweekly cadence and pause/resume</h1>
+<div class="sub">Adds the two most requested recurring-rule features: a biweekly cadence (every second week on a weekday) and pause/resume so users can suspend a subscription rule while keeping its history. Tests included for both.</div>
+<span class="verdict" style="background:#c62828">Request changes — 2 confirmed finding(s), 2 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. Biweekly cadence implementation is identical to weekly; doesn&#x27;t skip alternate weeks</strong>
+  <div class="loc">ledgerly/recurring.py:106 &middot; correctness</div>
+  <div>Lines 106-111 (biweekly branch) are a verbatim copy of lines 100-105 (weekly branch). The code appends every occurrence of the matching weekday without checking for alternation. The PR description promises &#x27;a biweekly cadence (every second week on a weekday)&#x27; but the implementation returns all matching weekdays like weekly, not every other week. For example, a biweekly Monday rule from 2026-03-01 to 2026-03-31 will incorrectly produce [2026-03-02, 2026-03-09, 2026-03-16, 2026-03-23] instead of alternating weeks like [2026-03-02, 2026-03-16] or [2026-03-09, 2026-03-23].</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/recurring.py lines 100-112: the biweekly branch (else clause) is byte-identical logic to the weekly branch, only differing by an inline comment &#x27;# biweekly&#x27;. Executed occurrences_between({&#x27;cadence&#x27;:&#x27;biweekly&#x27;,&#x27;weekday&#x27;:0}, 2026-03-01, 2026-03-31) directly: returned [03-02, 03-09, 03-16, 03-23, 03-30] — every single Monday, not alternating weeks, confirming no skip-logic exists. Also ran the PR&#x27;s own new test (test_biweekly_occurrence) which passes, but only because its date range (2026-03-02 to 2026-03-10) spans just over one week so only one Monday candidate exists regardless of</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>2. Biweekly test window too narrow to verify alternating-week behavior</strong>
+  <div class="loc">tests/test_recurring.py:69 &middot; test-adequacy</div>
+  <div>test_biweekly_occurrence uses a 9-day range (2026-03-02 to 2026-03-10) containing only one Monday (3/9). This window cannot distinguish between a correct biweekly implementation (every other Monday) and the broken implementation (all Mondays). Both would return [2026-03-09]. To verify biweekly returns alternating occurrences, the test must cover a range with 2+ instances of the target weekday (e.g., 2026-03-02 to 2026-03-23, spanning 3 Mondays on 3/9, 3/16, 3/23) and assert only every other one is returned.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/recurring.py: the biweekly branch in occurrences_between is a byte-for-byte copy of the weekly branch (same loop, same `d.weekday() == rule[&#x27;weekday&#x27;]` check, no alternation logic based on start date). Ran the actual PR test (test_biweekly_occurrence) — it passes. Then reproduced occurrences_between with the same rule but a wider range (2026-03-02 to 2026-03-23, 3 Mondays): biweekly returns [3/9, 3/16, 3/23], identical to calling with cadence=&#x27;weekly&#x27;. This proves biweekly is completely non-functional (behaves exactly like weekly, i.e. double-charges users) and the PR&#x27;s 9-day tes</div>
+</div>
+<footer>Pipeline: reviewer_correctness (1) &rarr; reviewer_security (0) &rarr; reviewer_tests (1) &rarr; verifier (2) &middot; 160.0s &middot;
+$0.44 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

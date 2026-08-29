@@ -1,0 +1,65 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: CSV export endpoint + household API</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: CSV export endpoint + household API</h1>
+<div class="sub">Adds GET /export (download expenses as CSV), and first household endpoints: GET /household/balances and POST /household/expenses. Also tidies the handler layer: field validation renamed to _require_fields and route registrations grouped by resource.</div>
+<span class="verdict" style="background:#c62828">Request changes — 4 confirmed finding(s), 2 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. Missing authorization check in /household/balances endpoint</strong>
+  <div class="loc">ledgerly/api.py:156 &middot; security</div>
+  <div>The GET /household/balances endpoint does not verify that the requesting user is a member of the household before returning financial information. The function takes household_id from request parameters and immediately calls household.balances(db, hid) without calling household.require_member(). This allows any authenticated user to view the balances of any household if they know (or guess) the household_id. Compare this to POST /household/expenses (line 177) which properly calls household.add_shared_expense(), which internally enforces membership at line 87 of household.py. The test at line 87 (test_balances_for_own_household) only tests the authorized case; there is no test verifying that non-members cannot access balances. Failure scenario: User A creates a household with ID 5. User B, completely unrelated and not a member, authenticates and calls GET /household/balances?household_id=5 to view all members&#x27; financial positions.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read household.py: require_member() exists and is called by add_shared_expense() (line 87) but get_household_balances() in api.py calls household.balances(db, hid) directly with no membership check. Reproduced live: created a household owned by alice with a $50 shared expense; logged in as bob, an unrelated registered user never added as a member, and called GET /household/balances?household_id=&lt;hid&gt; with bob&#x27;s valid token -&gt; got HTTP 200 with the full balances array (alice&#x27;s net_cents exposed). As a contrast check, POST /household/expenses with bob&#x27;s token against the same household correctly</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>2. CSV injection vulnerability in /export endpoint</strong>
+  <div class="loc">ledgerly/api.py:200 &middot; security</div>
+  <div>The GET /export endpoint constructs CSV output by directly concatenating user data without proper escaping (line 200: `lines.append(f&quot;{r[&#x27;spent_on&#x27;]},{r[&#x27;category&#x27;]},{amount},{r[&#x27;note&#x27;]}&quot;)`). This creates two vulnerabilities: (1) Formula injection - if any field starts with `=`, `+`, `@`, or `-`, spreadsheet applications (Excel, Google Sheets) interpret it as a formula and execute it, allowing code execution. (2) CSV format corruption - fields containing commas or newlines are not quoted, breaking the CSV structure. The codebase already demonstrates proper CSV handling in importers.py (line 41) using csv.reader; the export should use csv.writer to properly quote fields. The test at line 113 (test_export_csv) only tests benign input and does not verify escaping. Failure scenario: User creates an expense with note &#x27;=cmd|\&#x27;/c calc\&#x27;!A1&#x27;. When another user downloads and opens the CSV in Excel, the formula executes, launching calculator or arbitrary commands.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/api.py get_export (lines ~186-201): CSV rows are built via f-string concatenation with no escaping/quoting. Reproduced via direct script calling api.handle(): (1) posted an expense with note &#x27;=cmd|&#x27;/c calc&#x27;!A1&#x27; and confirmed the export body contains the raw unescaped formula string starting with &#x27;=&#x27;, which Excel/Sheets would execute as a formula; (2) posted an expense with note containing a comma and newline (&#x27;line1\nline2,extra,fields&#x27;) and confirmed that parsing the exported body with Python&#x27;s standard csv.reader splits it into two malformed rows ([&#x27;2026-03-02&#x27;,&#x27;food&#x27;,&#x27;5.00&#x27;,&#x27;l</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>3. Floating-point precision loss in household expense amount conversion</strong>
+  <div class="loc">ledgerly/api.py:176 &middot; correctness</div>
+  <div>Line 176 uses `int(float(request.body[&quot;amount&quot;]) * 100)` to convert currency strings to cents, which loses precision due to floating-point arithmetic. For example, float(&quot;10.99&quot;) * 100 = 1098.9999..., truncating to 1098 cents instead of the correct 1099. This creates incorrect expense amounts and balance calculations. The regular /expenses endpoint correctly uses parse_money() on line 101. Failure scenario: User posts household expense with amount &quot;10.99&quot; (or other problematic values like &quot;1.29&quot;), resulting in a 1-cent discrepancy in household balances and settlement calculations.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Reproduced end-to-end: posted a household expense with amount &#x27;19.99&#x27; via POST /household/expenses, then queried GET /household/balances. The stored amount_cents came back as 1998 instead of 1999 (net_cents 999/-999), confirming `int(float(request.body[&quot;amount&quot;]) * 100)` at ledgerly/api.py:176 truncates due to float imprecision (`float(&#x27;19.99&#x27;)*100 == 1998.9999999999998`), directly corrupting household ledger balances. Confirmed the sibling /expenses endpoint (api.py:101) instead uses `parse_money()` which parses the decimal string exactly via regex/int arithmetic, avoiding this class of bug e</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>4. Test name promises membership check not verified</strong>
+  <div class="loc">tests/test_api.py:87 &middot; test-adequacy</div>
+  <div>The test is named &#x27;test_balances_for_own_household&#x27; which promises the endpoint restricts access to the user&#x27;s own household. However, the test only verifies the happy path where the user IS a member of the household. It does not test that accessing a household the user is not a member of fails or is denied. Examining get_household_balances (api.py:156-169), there is NO membership verification in the endpoint—it accepts any household_id without checking if request.user_id is a member. The test would pass even if this authorization were completely missing. Failure scenario: a non-member requesting GET /household/balances?household_id=&lt;other_hid&gt; would return balances, but this test cannot detect it.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read household.py: require_member() exists and is called by add_shared_expense/add_member/remove_member, but get_household_balances in api.py:156-169 calls household.balances(db, hid) directly with no require_member/membership check. Reproduced with a live script: registered alice/bob/carol, created a household with alice+bob, added a shared expense, then logged in as carol (never added as a member) and called GET /household/balances?household_id=&lt;hid&gt; with her own valid token — got HTTP 200 with the full balances of alice and bob, confirming any authenticated user can read any household&#x27;s fin</div>
+</div>
+<footer>Pipeline: reviewer_correctness (2) &rarr; reviewer_security (2) &rarr; reviewer_tests (2) &rarr; verifier (4) &middot; 178.4s &middot;
+$0.78 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

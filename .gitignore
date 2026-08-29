@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .DS_Store
+
+# Replay results are regenerated; keep only inputs under version control.
+replay/results/
+reviews/*/trajectories/

@@ -1,0 +1,368 @@
+diff --git a/README.rst b/README.rst
+index 4aaf312..176e961 100644
+--- a/README.rst
++++ b/README.rst
+@@ -41,6 +41,7 @@ Usage
+     schedule.every(5).to(10).minutes.do(job)
+     schedule.every().monday.do(job)
+     schedule.every().wednesday.at("13:15").do(job)
++    schedule.every().day.at("12:42", "Europe/Amsterdam").do(job)
+     schedule.every().minute.at(":17").do(job)
+ 
+     def job_with_argument(name):
+diff --git a/docs/_static/.gitkeep b/docs/_static/.gitkeep
+deleted file mode 100644
+index fcefbe3..0000000
+--- a/docs/_static/.gitkeep
++++ /dev/null
+@@ -1,3 +0,0 @@
+-Sphinx likes to see the _static folder.
+-If it isn't there it will throw an error.
+-As long as there aren't any files in here, this file will ensure git doesn't throw away this folder.
+\ No newline at end of file
+diff --git a/docs/_static/custom.css b/docs/_static/custom.css
+new file mode 100644
+index 0000000..84d9395
+--- /dev/null
++++ b/docs/_static/custom.css
+@@ -0,0 +1,3 @@
++.toctree-l1 {
++    padding-bottom: 4px;
++}
+\ No newline at end of file
+diff --git a/docs/examples.rst b/docs/examples.rst
+index 397fc91..d214658 100644
+--- a/docs/examples.rst
++++ b/docs/examples.rst
+@@ -36,6 +36,7 @@ Run a job every x minute
+     # Run job every day at specific HH:MM and next HH:MM:SS
+     schedule.every().day.at("10:30").do(job)
+     schedule.every().day.at("10:30:42").do(job)
++    schedule.every().day.at("12:42", "Europe/Amsterdam").do(job)
+ 
+     # Run job on a specific day of the week
+     schedule.every().monday.do(job)
+diff --git a/docs/faq.rst b/docs/faq.rst
+index 81519cf..98d65ee 100644
+--- a/docs/faq.rst
++++ b/docs/faq.rst
+@@ -42,11 +42,16 @@ It might be that your IDE uses a different Python interpreter installation.
+ 
+ Still having problems? Use Google and StackOverflow before submitting an issue.
+ 
++ModuleNotFoundError: ModuleNotFoundError: No module named 'pytz'
++----------------------------------------------------------------
++
++This error happens when you try to set a timezone in ``.at()`` without having the `pytz <https://pypi.org/project/pytz/>`_ package installed.
++Pytz is a required dependency when working with timezones.
++To resolve this issue, install the ``pytz`` module by running ``pip install pytz``.
++
+ Does schedule support time zones?
+ ---------------------------------
+-Vanilla schedule doesn’t support time zones at the moment.
+-If you need this functionality please check out @imiric’s work `here <https://github.com/dbader/schedule/pull/16>`_.
+-He added time zone support to schedule using python-dateutil.
++Yes! See :doc:`Timezones <timezones>`.
+ 
+ What if my task throws an exception?
+ ------------------------------------
+diff --git a/docs/index.rst b/docs/index.rst
+index b2327ea..7e983d3 100644
+--- a/docs/index.rst
++++ b/docs/index.rst
+@@ -40,6 +40,7 @@ Python job scheduling for humans. Run Python functions (or any other callable) p
+     schedule.every().day.at("10:30").do(job)
+     schedule.every().monday.do(job)
+     schedule.every().wednesday.at("13:15").do(job)
++    schedule.every().day.at("12:42", "Europe/Amsterdam").do(job)
+     schedule.every().minute.at(":17").do(job)
+ 
+     while True:
+@@ -58,7 +59,7 @@ You should probably look somewhere else if you need:
+ * Job persistence (remember schedule between restarts)
+ * Exact timing (sub-second precision execution)
+ * Concurrent execution (multiple threads)
+-* Localization (time zones, workdays or holidays)
++* Localization (workdays or holidays)
+ 
+ 
+ **Schedule does not account for the time it takes for the job function to execute.**
+@@ -75,6 +76,7 @@ Read More
+    examples
+    background-execution
+    parallel-execution
++   timezones
+    exception-handling
+    logging
+    multiple-schedulers
+diff --git a/docs/timezones.rst b/docs/timezones.rst
+new file mode 100644
+index 0000000..854a55c
+--- /dev/null
++++ b/docs/timezones.rst
+@@ -0,0 +1,61 @@
++Timezone & Daylight Saving Time
++===============================
++
++Timezone in .at()
++~~~~~~~~~~~~~~~~~
++
++Schedule supports setting the job execution time in another timezone using the ``.at`` method.
++
++**To work with timezones** `pytz <https://pypi.org/project/pytz/>`_ **must be installed!** Get it:
++
++.. code-block:: bash
++
++    pip install pytz
++
++Timezones are only available in the ``.at`` function, like so:
++
++.. code-block:: python
++
++    # Pass a timezone as a string
++    schedule.every().day.at("12:42", "Europe/Amsterdam").do(job)
++
++    # Pass an pytz timezone object
++    from pytz import timezone
++    schedule.every().friday.at("12:42", timezone("Africa/Lagos")).do(job)
++
++Schedule uses the timezone to calculate the next runtime in local time.
++All datetimes inside the library are stored `naive <https://docs.python.org/3/library/datetime.html>`_.
++This causes the ``next_run`` and ``last_run`` to always be in Pythons local timezone.
++
++Daylight Saving Time
++~~~~~~~~~~~~~~~~~~~~
++When scheduling jobs with relative time (that is when not using ``.at()``), daylight saving time (DST) is **not** taken into account.
++A job that is set to run every 4 hours might execute after 3 realtime hours when DST goes into effect.
++This is because schedule is timezone-unaware for relative times.
++
++However, when using ``.at()``, DST **is** handed correctly: the job will always run at (or close after) the set timestamp.
++A job scheduled during a moment that is skipped, the job will execute after the clock is moved.
++For example, a job is scheduled ``.at("02:30")``, clock moves from ``02:00`` to ``03:00``, the job will run at ``03:00``.
++
++Example
++~~~~~~~
++Let's say we are in ``Europe/Berlin`` and local datetime is ``2022 march 20, 10:00:00``.
++At the moment daylight saving time is not in effect in Berlin (UTC+1).
++
++We schedule a job to run every day at 10:30:00 in America/New_York.
++At this time, daylight saving time is in effect in New York (UTC-4).
++
++.. code-block:: python
++
++    s = every().day.at("10:30", "America/New_York").do(job)
++
++Because of the 5 hour time difference between Berlin and New York the job should effectively run at ``15:30:00``.
++So the next run in Berlin time is ``2022 march 20, 15:30:00``:
++
++.. code-block:: python
++
++    print(s.next_run)
++    # 2022-03-20 15:30:00
++
++    print(repr(s))
++    # Every 1 day at 10:30:00 do job() (last run: [never], next run: 2022-03-20 15:30:00)
+diff --git a/requirements-dev.txt b/requirements-dev.txt
+index ed51505..467fb0b 100644
+--- a/requirements-dev.txt
++++ b/requirements-dev.txt
+@@ -7,4 +7,6 @@ pytest-flake8
+ Sphinx
+ black==20.8b1
+ click==8.0.4
+-mypy
+\ No newline at end of file
++mypy
++pytz
++types-pytz
+\ No newline at end of file
+diff --git a/schedule/__init__.py b/schedule/__init__.py
+index 4fd7551..8d02837 100644
+--- a/schedule/__init__.py
++++ b/schedule/__init__.py
+@@ -234,6 +234,9 @@ class Job(object):
+         # optional time at which this job runs
+         self.at_time: Optional[datetime.time] = None
+ 
++        # optional time zone of the self.at_time field. Only relevant when at_time is not None
++        self.at_time_zone = None
++
+         # datetime of the last run
+         self.last_run: Optional[datetime.datetime] = None
+ 
+@@ -462,7 +465,7 @@ class Job(object):
+         self.tags.update(tags)
+         return self
+ 
+-    def at(self, time_str):
++    def at(self, time_str: str, tz: str = None):
+ 
+         """
+         Specify a particular time that the job should be run at.
+@@ -480,12 +483,28 @@ class Job(object):
+             selected time-unit (e.g. `every().hour.at(':30')` vs.
+             `every().minute.at(':30')`).
+ 
++        :param tz: The timezone that this timestamp refers to. Can be
++            a string that can be parsed by pytz.timezone(), or a pytz.BaseTzInfo object
++
+         :return: The invoked job instance
+         """
+         if self.unit not in ("days", "hours", "minutes") and not self.start_day:
+             raise ScheduleValueError(
+                 "Invalid unit (valid units are `days`, `hours`, and `minutes`)"
+             )
++
++        if tz is not None:
++            import pytz
++
++            if isinstance(tz, str):
++                self.at_time_zone = pytz.timezone(tz)  # type: ignore
++            elif isinstance(tz, pytz.BaseTzInfo):
++                self.at_time_zone = tz
++            else:
++                raise ScheduleValueError(
++                    "Timezone must be string or pytz.timezone object"
++                )
++
+         if not isinstance(time_str, str):
+             raise TypeError("at() should be passed a string")
+         if self.unit == "days" or self.start_day:
+@@ -531,6 +550,7 @@ class Job(object):
+         elif self.unit == "minutes":
+             hour = 0
+             minute = 0
++        hour = int(hour)
+         minute = int(minute)
+         second = int(second)
+         self.at_time = datetime.time(hour, minute, second)
+@@ -724,6 +744,16 @@ class Job(object):
+             if self.unit in ["days", "hours"] or self.start_day is not None:
+                 kwargs["minute"] = self.at_time.minute
+             self.next_run = self.next_run.replace(**kwargs)  # type: ignore
++
++            if self.at_time_zone is not None:
++                # Convert next_run from the expected timezone into the local time
++                # self.next_run is a naive datetime so after conversion remove tzinfo
++                self.next_run = (
++                    self.at_time_zone.localize(self.next_run)
++                    .astimezone()
++                    .replace(tzinfo=None)
++                )
++
+             # Make sure we run at the specified time *today* (or *this hour*)
+             # as well. This accounts for when a job takes so long it finished
+             # in the next period.
+diff --git a/test_schedule.py b/test_schedule.py
+index a52ecfa..7b4b83d 100644
+--- a/test_schedule.py
++++ b/test_schedule.py
+@@ -3,6 +3,8 @@ import datetime
+ import functools
+ import mock
+ import unittest
++import os
++import time
+ 
+ # Silence "missing docstring", "method could be a function",
+ # "class already defined", and "too many public methods" messages:
+@@ -17,6 +19,10 @@ from schedule import (
+     IntervalError,
+ )
+ 
++# Set timezone to Europe/Berlin (CEST) to ensure global reproducibility
++os.environ["TZ"] = "CET-1CEST,M3.5.0,M10.5.0"
++time.tzset()
++
+ 
+ def make_mock_job(name=None):
+     job = mock.Mock()
+@@ -516,6 +522,58 @@ class SchedulerTests(unittest.TestCase):
+             assert job.next_run.minute == 13
+             assert job.next_run.second == 15
+ 
++    def test_at_timezone(self):
++        mock_job = make_mock_job()
++        try:
++            import pytz
++        except ModuleNotFoundError:
++            self.skipTest("pytz unavailable")
++            return
++
++        with mock_datetime(2022, 2, 1, 23, 15):
++            # Current Berlin time: feb-1 23:15 (local)
++            # Current India time: feb-2 03:45
++            # Expected to run India time: feb-2 06:30
++            # Next run Berlin time: feb-2 02:00
++            next = every().day.at("06:30", "Asia/Kolkata").do(mock_job).next_run
++            assert next.hour == 2
++            assert next.minute == 0
++
++        with mock_datetime(2022, 4, 8, 10, 0):
++            # Current Berlin time: 10:00 (local) (during daylight saving)
++            # Current NY time: 04:00
++            # Expected to run NY time: 10:30
++            # Next run Berlin time: 16:30
++            next = every().day.at("10:30", "America/New_York").do(mock_job).next_run
++            assert next.hour == 16
++            assert next.minute == 30
++
++        with mock_datetime(2022, 3, 20, 10, 0):
++            # Current Berlin time: 10:00 (local) (NOT during daylight saving)
++            # Current NY time: 04:00 (during daylight saving)
++            # Expected to run NY time: 10:30
++            # Next run Berlin time: 15:30
++            tz = pytz.timezone("America/New_York")
++            next = every().day.at("10:30", tz).do(mock_job).next_run
++            assert next.hour == 15
++            assert next.minute == 30
++
++        with self.assertRaises(pytz.exceptions.UnknownTimeZoneError):
++            every().day.at("10:30", "FakeZone").do(mock_job)
++
++        with self.assertRaises(ScheduleValueError):
++            every().day.at("10:30", 43).do(mock_job)
++
++    def test_daylight_saving_time(self):
++        mock_job = make_mock_job()
++        # 27 March 2022, 02:00:00 clocks were turned forward 1 hour
++        with mock_datetime(2022, 3, 27, 0, 0):
++            assert every(4).hours.do(mock_job).next_run.hour == 4
++
++        # Sunday, 30 October 2022, 03:00:00 clocks were turned backward 1 hour
++        with mock_datetime(2022, 10, 30, 0, 0):
++            assert every(4).hours.do(mock_job).next_run.hour == 4
++
+     def test_run_all(self):
+         mock_job = make_mock_job()
+         every().minute.do(mock_job)
+diff --git a/tox.ini b/tox.ini
+index 584d93e..09d92c5 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -1,5 +1,5 @@
+ [tox]
+-envlist = py3{6,7,8,9}
++envlist = py3{6,7,8,9}{,-pytz}
+ skip_missing_interpreters = true
+ 
+ 
+@@ -11,10 +11,16 @@ python =
+     3.9: py39
+ 
+ [testenv]
+-deps = -rrequirements-dev.txt
++deps =
++    mock
++    pytest
++    pytest-cov
++    mypy
++    types-pytz
++    pytz: pytz
+ commands =
+     py.test test_schedule.py schedule -v --cov schedule --cov-report term-missing
+-    python -m mypy -p schedule
++    python -m mypy -p schedule --install-types --non-interactive
+ 
+ [testenv:docs]
+ changedir = docs

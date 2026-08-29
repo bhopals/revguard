@@ -1,0 +1,65 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Importer v2: category mapping and atomic batches</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Importer v2: category mapping and atomic batches</h1>
+<div class="sub">Statement import learns two things users kept asking for: map merchant descriptions to categories (case-insensitive prefix rules, e.g. &#x27;COFFEE&#x27; -&gt; food), and all-or-nothing batches so a bad row no longer leaves a half-imported statement. Duplicate detection was also simplified and sped up by keying on (date, amount).</div>
+<span class="verdict" style="background:#c62828">Request changes — 4 confirmed finding(s), 2 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. Broken atomicity in import_statement: nested transactions commit independently</strong>
+  <div class="loc">ledgerly/importers.py:107 &middot; correctness</div>
+  <div>The import_statement function claims to be atomic (lines 100-103: &#x27;The whole batch succeeds or fails together: if any row cannot be imported, no expense from this statement is recorded&#x27;), but the implementation breaks this guarantee. The outer &#x27;with db.transaction()&#x27; context manager (line 107) calls add_expense() (line 112), which internally calls db.execute() (expenses.py:24). This db.execute() method has its own nested transaction context manager (db.py:127) that calls commit() independently (db.py:128), immediately persisting each expense to the database. If any subsequent operation fails (e.g., an invalid category in the mapping at line 112), the exception propagates to the outer transaction handler, which calls rollback(). However, previous expenses are already committed and cannot be rolled back, leaving a half-imported statement in the database. Concrete failure: importing a 3-row statement where row 2 has an invalid category results in row 1 being committed to the database while the import_batches record is never inserted, violating the all-or-nothing contract.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/db.py: Database.transaction() is a plain contextmanager wrapping the single shared sqlite3 connection with commit()/rollback() and no savepoints; Database.execute() (used by add_expense via expenses.py:24) opens its own nested `with self.transaction()` block that calls self.conn.commit() immediately. Because there is only one underlying connection with no SAVEPOINT nesting, that inner commit() flushes ALL pending work on the connection, not just the row it inserted. Reproduced directly: ran import_statement with a 3-row statement and a category_map that fails on row 3 (or row 2) </div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>2. Atomicity test does not verify rollback behavior</strong>
+  <div class="loc">tests/test_importers.py:69 &middot; test-adequacy</div>
+  <div>test_atomic_batch imports a valid statement and verifies it succeeds. However, the PR&#x27;s core feature is &#x27;all-or-nothing batches&#x27; to prevent &#x27;a half-imported statement&#x27; when a row fails. The test never exercises the rollback scenario: it should import a statement with an error partway through and verify that the entire batch (expenses and batch record) is rolled back. Currently it only tests the success path, leaving the atomicity guarantee untested.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read tests/test_importers.py in full (74 lines): TestAtomicity.test_atomic_batch only imports a valid statement and checks the success path; no test triggers a mid-batch failure to verify rollback. Executed a manual repro: import_statement(db, user, STATEMENT, category_map={&#x27;STREAM&#x27;: &#x27;yachts&#x27;}) raises ImportError_ on the 4th row as expected, but afterward `expenses` table has 2 rows (COFFEE CO, GROCER LTD) persisted while `import_batches` has 0 rows -- i.e. the batch is NOT rolled back atomically. Root cause: ledgerly/db.py Database.execute() wraps each call in its own `with self.transaction()</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>3. Duplicate detection overly broad: removed description from uniqueness check</strong>
+  <div class="loc">ledgerly/importers.py:90 &middot; correctness</div>
+  <div>The _is_duplicate function was changed from checking (user_id, spent_on, amount_cents, note) to checking only (user_id, spent_on, amount_cents). This causes legitimate different transactions on the same date with the same amount but different descriptions to be incorrectly marked as duplicates. Concrete failure scenario: A statement contains two separate transactions on 2026-03-05: &#x27;-50.00, COFFEE SHOP&#x27; and &#x27;-50.00, DONUT PLACE&#x27;. Both are real expenses from different vendors. With the new code, the second row would be skipped as a duplicate, losing data that should be imported. The PR description mentions this was &#x27;simplified and sped up&#x27;, but the trade-off introduces a correctness defect where real transactions are silently discarded.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/importers.py:90-96 confirming _is_duplicate now queries only (user_id, spent_on, amount_cents), having dropped the `note` column from the old query (visible in diff). Reproduced the exact scenario from the finding via python3 -c: imported a statement with two 2026-03-05 rows of -50.00 each, &#x27;COFFEE SHOP&#x27; and &#x27;DONUT PLACE&#x27;. Result: imported=1, skipped=1, and monthly_summary shows only 5000 cents total instead of 10000 — the second legitimate transaction was silently discarded as a false-positive duplicate. This is a genuine runtime correctness defect (not a test-coverage complaint</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>4. Category mapping requires uppercase keys but doesn&#x27;t validate or document this</strong>
+  <div class="loc">ledgerly/importers.py:82 &middot; correctness</div>
+  <div>The category_for() function&#x27;s docstring (line 78) promises &#x27;case-insensitive prefix rules&#x27;, but the implementation is not fully case-insensitive. Line 82 checks &#x27;if desc.upper().startswith(prefix)&#x27; where the description is uppercased but the prefix (from category_map keys) is not. This means a category_map like {&#x27;coffee&#x27;: &#x27;food&#x27;} will not match descriptions like &#x27;COFFEE CO&#x27; because &#x27;COFFEE CO&#x27;.startswith(&#x27;coffee&#x27;) is False. The mapping silently fails and falls back to DEFAULT_CATEGORY, contradicting the docstring&#x27;s promise and violating the principle of least surprise. There is no validation or error message to alert users that their lowercase keys will not work as expected. Concrete failure: A user creates category_map={&#x27;coffee&#x27;: &#x27;food&#x27;} and imports a statement with &#x27;COFFEE CO&#x27;. The expense is categorized as &#x27;other&#x27; instead of &#x27;food&#x27;, silently contradicting the function&#x27;s documented behavior.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/importers.py:77-87 and reproduced with `python3 -c`: category_for(&#x27;COFFEE CO&#x27;, {&#x27;coffee&#x27;: &#x27;food&#x27;})` returns &#x27;other&#x27; while `category_for(&#x27;COFFEE CO&#x27;, {&#x27;COFFEE&#x27;: &#x27;food&#x27;})` returns &#x27;food&#x27;. Line 82 does `desc.upper().startswith(prefix)` — only the description is uppercased, not the map key/prefix — so lowercase or mixed-case category_map keys silently never match and fall back to DEFAULT_CATEGORY, with no validation or error raised. This directly contradicts the function&#x27;s own docstring (&#x27;case-insensitive prefix rules&#x27;) and the module docstring&#x27;s promise. The existing test suite only</div>
+</div>
+<footer>Pipeline: reviewer_correctness (3) &rarr; reviewer_security (0) &rarr; reviewer_tests (1) &rarr; verifier (4) &middot; 209.0s &middot;
+$0.76 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

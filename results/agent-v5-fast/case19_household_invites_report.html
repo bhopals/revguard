@@ -1,0 +1,65 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Household invite codes</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Household invite codes</h1>
+<div class="sub">Owners can now invite people without knowing their user id: create_invite() issues a short shareable code, accept_invite() joins the caller to the household. Includes schema and tests.</div>
+<span class="verdict" style="background:#c62828">Request changes — 4 confirmed finding(s), 1 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. Invite code reuse vulnerability - single code usable by unlimited users</strong>
+  <div class="loc">ledgerly/household.py:100 &middot; security</div>
+  <div>The invites table schema includes a used_at field (db.py:96) to track single-use semantics, but accept_invite() never checks or updates it. Result: one invite code can be used by multiple different users to join a household. Failure scenario: Owner creates code &#x27;ABC123&#x27;. User A accepts and joins. User B accepts the same code &#x27;ABC123&#x27; and also joins, when only A should have been able to join. The test test_member_cannot_accept_twice only catches the same user accepting twice (prevented by existing membership check), not different users.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read household.py: accept_invite() only checks `_member_role(db, hid, user_id) is not None` (blocks the *same* user re-joining) but never queries or sets `used_at`. Confirmed `used_at` appears nowhere else in the codebase (grep across ledgerly/*.py only hits the schema definition in db.py). Executed a live repro: created a household as alice, generated one invite code, then had both bob and carol call accept_invite() with that same code — both succeeded and both appear as &#x27;member&#x27; in members_of(), proving the same code is reusable by different users indefinitely.</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>2. used_at field never populated, allowing code reuse</strong>
+  <div class="loc">ledgerly/household.py:110 &middot; correctness</div>
+  <div>The schema defines a used_at field (db.py line 96) to track when an invite is consumed, but accept_invite() never sets it. This allows the same invite code to be used multiple times: a user can accept the code, leave the household, and accept the same code again. The implementation should either UPDATE invites SET used_at = utcnow_iso() at line 110, or check that used_at IS NULL before accepting.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/household.py: accept_invite() only checks that the code exists and the user isn&#x27;t already a member; it never reads or writes invites.used_at. grep confirms used_at (db.py:96) is not referenced anywhere else in the codebase. Reproduced with a live script: created household, invite code, accepted it as carol, had carol leave via remove_member, then accepted the same code again successfully (both calls returned the household id) — confirming the same invite code can be reused indefinitely, e.g. after a member leaves, contrary to the intent implied by the used_at column.</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>3. Insecure randomness for invite code generation</strong>
+  <div class="loc">ledgerly/household.py:91 &middot; security</div>
+  <div>Uses random.randrange() instead of secrets module for generating security-sensitive invite codes. The same codebase (auth.py:36, auth.py:56) correctly uses secrets for tokens and salts. Invite codes are access-control credentials and must use cryptographically secure randomness. Failure scenario: predictable codes can be brute-forced or guessed to join households without authorization.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/household.py:91 — create_invite() generates codes via `random.randrange(16**6)`, i.e. Python&#x27;s Mersenne Twister PRNG, not a CSPRNG. Confirmed the same codebase already uses `secrets` correctly for equivalent security tokens: auth.py:9 imports secrets, auth.py:36 uses secrets.token_hex(16) for password salts, auth.py:56 uses secrets.token_urlsafe(32) for session tokens — establishing this project&#x27;s own standard for security-sensitive randomness. Verified via python3 -c reproduction that random module output is fully deterministic from its internal state (same seed -&gt; identical inv</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>4. Test avoids code-reuse scenario for different users</strong>
+  <div class="loc">tests/test_household.py:88 &middot; test-adequacy</div>
+  <div>The test `test_member_cannot_accept_twice` (lines 88-93) uses the same user (carol) both times, thus testing only that a member cannot join their household twice. It deliberately avoids the critical scenario: whether different users can reuse the same invite code. The invites table schema includes a `used_at` field, indicating one-time-use codes were intended. This test gap fails to verify whether the same code can be accepted by multiple different users—a fundamental property of secure invite systems. Concrete failure scenario: User A accepts code X (succeeds), User B accepts code X (should fail if one-time-use, but the test never checks this).</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/household.py: accept_invite() never checks or sets the invites.used_at column (grep for &#x27;used_at&#x27; in household.py returns nothing), so invite codes never expire after use. Reproduced live: created household, invite code, had two different users (bob, dave) call accept_invite with the SAME code — both succeeded and became members (output: &#x27;bob joins: 1&#x27;, &#x27;dave joins with SAME code: 1&#x27;, members list shows both as members). This proves the invite system provides no one-time-use protection across different users, only conftest.py&#x27;s test_member_cannot_accept_twice checks the same user</div>
+</div>
+<footer>Pipeline: reviewer_correctness (4) &rarr; reviewer_security (2) &rarr; reviewer_tests (1) &rarr; verifier (4) &middot; 160.8s &middot;
+$0.56 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

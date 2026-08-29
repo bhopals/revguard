@@ -1,0 +1,97 @@
+{
+  "case": "case19_household_invites",
+  "system": "agent-v5-fast",
+  "findings": [
+    {
+      "file": "ledgerly/household.py",
+      "line": 100,
+      "category": "security",
+      "severity": "critical",
+      "title": "Invite code reuse vulnerability - single code usable by unlimited users",
+      "description": "The invites table schema includes a used_at field (db.py:96) to track single-use semantics, but accept_invite() never checks or updates it. Result: one invite code can be used by multiple different users to join a household. Failure scenario: Owner creates code 'ABC123'. User A accepts and joins. User B accepts the same code 'ABC123' and also joins, when only A should have been able to join. The test test_member_cannot_accept_twice only catches the same user accepting twice (prevented by existing membership check), not different users.",
+      "reviewer": "security",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read household.py: accept_invite() only checks `_member_role(db, hid, user_id) is not None` (blocks the *same* user re-joining) but never queries or sets `used_at`. Confirmed `used_at` appears nowhere else in the codebase (grep across ledgerly/*.py only hits the schema definition in db.py). Executed a live repro: created a household as alice, generated one invite code, then had both bob and carol call accept_invite() with that same code \u2014 both succeeded and both appear as 'member' in members_of(), proving the same code is reusable by different users indefinitely.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "ledgerly/household.py",
+      "line": 110,
+      "category": "correctness",
+      "severity": "major",
+      "title": "used_at field never populated, allowing code reuse",
+      "description": "The schema defines a used_at field (db.py line 96) to track when an invite is consumed, but accept_invite() never sets it. This allows the same invite code to be used multiple times: a user can accept the code, leave the household, and accept the same code again. The implementation should either UPDATE invites SET used_at = utcnow_iso() at line 110, or check that used_at IS NULL before accepting.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/household.py: accept_invite() only checks that the code exists and the user isn't already a member; it never reads or writes invites.used_at. grep confirms used_at (db.py:96) is not referenced anywhere else in the codebase. Reproduced with a live script: created household, invite code, accepted it as carol, had carol leave via remove_member, then accepted the same code again successfully (both calls returned the household id) \u2014 confirming the same invite code can be reused indefinitely, e.g. after a member leaves, contrary to the intent implied by the used_at column.",
+        "adjusted_severity": "major"
+      }
+    },
+    {
+      "file": "ledgerly/household.py",
+      "line": 91,
+      "category": "security",
+      "severity": "major",
+      "title": "Insecure randomness for invite code generation",
+      "description": "Uses random.randrange() instead of secrets module for generating security-sensitive invite codes. The same codebase (auth.py:36, auth.py:56) correctly uses secrets for tokens and salts. Invite codes are access-control credentials and must use cryptographically secure randomness. Failure scenario: predictable codes can be brute-forced or guessed to join households without authorization.",
+      "reviewer": "security",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/household.py:91 \u2014 create_invite() generates codes via `random.randrange(16**6)`, i.e. Python's Mersenne Twister PRNG, not a CSPRNG. Confirmed the same codebase already uses `secrets` correctly for equivalent security tokens: auth.py:9 imports secrets, auth.py:36 uses secrets.token_hex(16) for password salts, auth.py:56 uses secrets.token_urlsafe(32) for session tokens \u2014 establishing this project's own standard for security-sensitive randomness. Verified via python3 -c reproduction that random module output is fully deterministic from its internal state (same seed -> identical invite codes), consistent with the well-known Mersenne Twister state-recovery/predictability weakness (CWE-338) that secrets.token_hex avoids. The invite code is used in accept_invite() as the sole credential granting membership in a household with no other authorization check, so predictability directly enables unauthorized household join. This is a genuine code-behavior defect (not a missing-test complaint) and is trivially reachable/exploitable.",
+        "adjusted_severity": "major"
+      }
+    },
+    {
+      "file": "tests/test_household.py",
+      "line": 88,
+      "category": "test-adequacy",
+      "severity": "major",
+      "title": "Test avoids code-reuse scenario for different users",
+      "description": "The test `test_member_cannot_accept_twice` (lines 88-93) uses the same user (carol) both times, thus testing only that a member cannot join their household twice. It deliberately avoids the critical scenario: whether different users can reuse the same invite code. The invites table schema includes a `used_at` field, indicating one-time-use codes were intended. This test gap fails to verify whether the same code can be accepted by multiple different users\u2014a fundamental property of secure invite systems. Concrete failure scenario: User A accepts code X (succeeds), User B accepts code X (should fail if one-time-use, but the test never checks this).",
+      "reviewer": "tests",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/household.py: accept_invite() never checks or sets the invites.used_at column (grep for 'used_at' in household.py returns nothing), so invite codes never expire after use. Reproduced live: created household, invite code, had two different users (bob, dave) call accept_invite with the SAME code \u2014 both succeeded and became members (output: 'bob joins: 1', 'dave joins with SAME code: 1', members list shows both as members). This proves the invite system provides no one-time-use protection across different users, only conftest.py's test_member_cannot_accept_twice checks the same user twice, which merely trips the unrelated 'already a member' check, not any invite-invalidation logic. Ran full test_household.py suite (13 passed) confirming this defect is completely unexercised by tests.",
+        "adjusted_severity": "major"
+      }
+    }
+  ],
+  "rejected_findings": [],
+  "raw_finding_count": 7,
+  "merged_count": 4,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 4,
+      "seconds": 121.8,
+      "cost_usd": 0.0961749
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 2,
+      "seconds": 50.7,
+      "cost_usd": 0.05595549999999999
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 1,
+      "seconds": 107.6,
+      "cost_usd": 0.092718
+    },
+    {
+      "stage": "verifier",
+      "in": 4,
+      "confirmed": 4,
+      "seconds": 39.0
+    }
+  ],
+  "seconds": 160.8,
+  "cost_usd": 0.5644
+}
