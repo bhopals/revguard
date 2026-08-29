@@ -1,0 +1,49 @@
+{
+  "case": "case19_household_invites",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/household.py",
+      "line": 87,
+      "category": "security",
+      "title": "Invite codes generated with non-cryptographic PRNG",
+      "description": "create_invite() uses random.randrange(), which is not cryptographically secure, to generate the invite code that grants access to a household's shared expense data. Python's `random` module is seeded from a predictable state and is not suitable for generating security tokens/credentials; an attacker who can observe some outputs or has knowledge of the PRNG state could predict future invite codes. This should use the `secrets` module (e.g. secrets.token_hex) instead.",
+      "severity": "critical"
+    },
+    {
+      "file": "ledgerly/household.py",
+      "line": 87,
+      "category": "security",
+      "title": "Invite code space too small with no rate limiting",
+      "description": "Codes are only 6 hex characters (16,777,216 possibilities), and accept_invite() has no rate limiting, lockout, or attempt tracking. Combined with the fact that invite codes never expire or become single-use (see used_at issue), an attacker can brute-force valid codes by repeatedly calling accept_invite with random guesses to join arbitrary households and see their financial data.",
+      "severity": "major"
+    },
+    {
+      "file": "ledgerly/household.py",
+      "line": 106,
+      "category": "correctness",
+      "title": "Invite codes are never marked used and never expire",
+      "description": "The invites table has a `used_at` column (db.py) clearly intended to mark a code as consumed, but accept_invite() never sets it and never checks it. As a result a single invite code can be used by an unlimited number of different users to join the household forever - there is no expiration and no single-use enforcement. This contradicts the apparent design intent (a per-invite, presumably single-use code) and means a leaked/shared code grants indefinite open enrollment into the household.",
+      "severity": "major"
+    },
+    {
+      "file": "ledgerly/household.py",
+      "line": 89,
+      "category": "robustness",
+      "title": "Unhandled primary-key collision when generating invite code",
+      "description": "code is inserted directly as the PRIMARY KEY without checking for or retrying on collisions. Although unlikely with 16.7M possible codes, if two invites happen to generate the same code the INSERT will raise an unhandled sqlite IntegrityError instead of retrying or returning a clear error to the caller.",
+      "severity": "minor"
+    },
+    {
+      "file": "tests/test_household.py",
+      "line": 84,
+      "category": "test-adequacy",
+      "title": "No test for invite code reuse/single-use semantics",
+      "description": "The test suite only checks that the same user cannot accept the same invite twice (via the 'already a member' check), but there is no test verifying whether an invite code can or cannot be used by a second, different user after being accepted once. Given the used_at column's apparent single-use intent, this gap masks the bug where invites remain valid indefinitely for arbitrarily many distinct users.",
+      "severity": "major"
+    }
+  ],
+  "seconds": 54.0,
+  "cost_usd": 0.0646008,
+  "num_turns": 1
+}
