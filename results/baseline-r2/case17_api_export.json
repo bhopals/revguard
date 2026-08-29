@@ -1,0 +1,73 @@
+{
+  "case": "case17_api_export",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/api.py",
+      "line": 176,
+      "category": "correctness",
+      "severity": "major",
+      "title": "Household expense amount parsed with float instead of parse_money",
+      "description": "post_household_expense computes cents with `int(float(request.body[\"amount\"]) * 100)` instead of reusing `parse_money`, which every other money-accepting endpoint (post_expense, post_budget) uses. Floating point multiplication is not exact for common decimal amounts (e.g. 19.99 * 100 == 1998.9999999999998), and `int()` truncates rather than rounds, so amounts like 19.99 get silently stored as 1998 cents instead of 1999. This also means input validation differs from parse_money (e.g. malformed strings raise a raw ValueError instead of a proper ApiError)."
+    },
+    {
+      "file": "ledgerly/api.py",
+      "line": 162,
+      "category": "security",
+      "severity": "critical",
+      "title": "No membership check on GET /household/balances",
+      "description": "get_household_balances takes household_id from a query parameter and calls household.balances(db, hid) without verifying that request.user_id is a member of that household. Any authenticated user can read another household's financial balances simply by guessing/enumerating household_id values (an IDOR)."
+    },
+    {
+      "file": "ledgerly/api.py",
+      "line": 177,
+      "category": "security",
+      "severity": "critical",
+      "title": "No membership check on POST /household/expenses",
+      "description": "post_household_expense passes int(request.body[\"household_id\"]) straight to household.add_shared_expense without checking that request.user_id belongs to that household. Any authenticated user can inject fraudulent shared expenses into an arbitrary household they are not a member of, corrupting other users' balances (IDOR / broken access control)."
+    },
+    {
+      "file": "ledgerly/api.py",
+      "line": 200,
+      "category": "correctness",
+      "severity": "major",
+      "title": "CSV export does not escape fields containing commas/quotes",
+      "description": "get_export builds each CSV row with a plain f-string join (`f\"{spent_on},{category},{amount},{note}\"`). If category or note contains a comma (e.g. note = \"lunch, with friends\"), the resulting row gains extra columns and silently corrupts the CSV structure for that row and all downstream parsing. The stdlib `csv` module (or manual quoting) should be used instead of naive string concatenation."
+    },
+    {
+      "file": "ledgerly/api.py",
+      "line": 200,
+      "category": "security",
+      "severity": "major",
+      "title": "CSV export vulnerable to formula/CSV injection",
+      "description": "User-controlled fields (category, note) are written verbatim into the CSV. If a value begins with '=', '+', '-', or '@', spreadsheet programs (Excel/Google Sheets/LibreOffice) that open the exported file may interpret it as a formula, leading to formula injection (e.g. a note of \"=cmd|'/c calc'!A1\" or a DDE/exfiltration payload). Fields should be sanitized (e.g. prefixing risky leading characters or quoting) before being written to CSV."
+    },
+    {
+      "file": "ledgerly/api.py",
+      "line": 161,
+      "category": "robustness",
+      "severity": "minor",
+      "title": "Non-numeric household_id causes unhandled 500 instead of 400",
+      "description": "`hid = int(hid)` is not wrapped in error handling. A non-numeric household_id query parameter raises an uncaught ValueError, resulting in a 500 response rather than the 400 the rest of the API returns for bad input (see the empty check just above it, which handles the missing case but not the malformed case)."
+    },
+    {
+      "file": "tests/test_api.py",
+      "line": 86,
+      "category": "test-adequacy",
+      "severity": "major",
+      "title": "No test coverage for household endpoint access control",
+      "description": "TestHouseholdEndpoints only covers the happy path where the requesting user is already a member of the household. There is no test verifying that a user who is not a member of a household is rejected from GET /household/balances or POST /household/expenses, which would have caught the missing authorization check in api.py."
+    },
+    {
+      "file": "tests/test_api.py",
+      "line": 104,
+      "category": "test-adequacy",
+      "severity": "minor",
+      "title": "No test for CSV export of fields containing commas/special characters",
+      "description": "TestExport only asserts on a note without commas or quotes ('lunch'). There is no test exercising a note or category containing a comma, quote, or leading '=' character, which would have surfaced the CSV escaping/formula-injection bug in get_export."
+    }
+  ],
+  "seconds": 94.2,
+  "cost_usd": 0.12798679999999998,
+  "num_turns": 1
+}
