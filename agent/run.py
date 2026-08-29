@@ -47,6 +47,13 @@ CONFIGS = {
            # original verifier confirmed 54/54 findings — it checked truth
            # but never whether a true observation is actually a defect.
            "verifier": "verifier_v2.md"},
+    # Cost ladder: v5's exact prompts and stages, but reviewers run on the
+    # small model (verifier stays on the default). Measures how much of
+    # v5's quality survives a ~4x cheaper reviewer tier.
+    "v5-fast": {"specialists": ["correctness", "security", "tests"],
+                "verify": True, "common": "reviewer_common_v2.md",
+                "specialist_set": "v2", "verifier": "verifier_v2.md",
+                "reviewer_model": "haiku"},
 }
 
 REVIEW_TASK = """Review this pull request.
@@ -96,7 +103,7 @@ def dedupe(findings):
 
 
 def run_specialist(name, common_prompt, title, description, diff, files,
-                   workdir, traj_dir, specialist_set="v1"):
+                   workdir, traj_dir, specialist_set="v1", model=None):
     briefs = SPECIALISTS_V2 if specialist_set == "v2" else SPECIALISTS
     prompt = REVIEW_TASK.format(
         title=title, description=description,
@@ -110,6 +117,7 @@ def run_specialist(name, common_prompt, title, description, diff, files,
             system_prompt=common_prompt + "\n" + briefs[name],
             cwd=workdir,
             allowed_tools=("Read", "Grep", "Glob"),
+            model=model,
             trajectory_path=Path(traj_dir) / f"reviewer_{name}.jsonl",
         )
         try:
@@ -163,7 +171,8 @@ def review_diff(config_name, title, description, diff, files, workdir,
         futs = {
             pool.submit(run_specialist, name, common_prompt, title,
                         description, diff, files, workdir, traj_dir,
-                        cfg.get("specialist_set", "v1")): name
+                        cfg.get("specialist_set", "v1"),
+                        cfg.get("reviewer_model")): name
             for name in cfg["specialists"]
         }
         for fut in futs:
