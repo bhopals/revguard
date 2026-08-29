@@ -8,15 +8,19 @@ voice. Speak at ~140 words/min; the whole script is ~630 words.
 
 ## How to record the video
 1. Open `docs/screencast.html` (or the Artifact link) in a browser, press **F**
-   for fullscreen. It auto-advances on the timings below.
+   for fullscreen. **Slides do NOT auto-advance** — you drive the pace.
 2. Screen-record it (macOS: **Cmd-Shift-5**; or QuickTime → New Screen
-   Recording). Press **R** to restart from scene 1, then start recording.
-3. Controls while recording: **Space** pause/resume, **← / →** step scenes,
-   **R** restart. Pause on a scene if you need more time to talk.
-4. Add your voiceover reading the script below — either live while recording,
-   or over the silent capture in any editor. The on-screen captions already
-   carry the gist, so the video works even before voiceover.
+   Recording). Press **Home** to be sure you're on scene 1, then start recording.
+3. Controls: **→ / Space / click** = next slide, **←** = back, **Home** =
+   first, **End** = last, **F** = fullscreen. Advance each slide when you finish
+   its narration line below — no timer to race.
+4. Read the script below as you go — either live while recording, or over the
+   silent capture in any editor. The on-screen captions carry the gist, so the
+   video works even before voiceover.
 5. Upload (YouTube/Loom/Drive) and paste the link into the submission form.
+
+The timings below are just a *pacing guide* now — advance manually when each
+line is done. Total is still ~4:30 at a natural pace.
 
 ---
 
@@ -116,6 +120,6 @@ voice. Speak at ~140 words/min; the whole script is ~630 words.
 ## Pacing notes
 - Total ≈ 630 words ≈ 4:30 at a natural pace. If you run long, Scene 9 is the
   safe cut (drop to one sentence).
-- Pause ~1s at each scene change; the screencast holds each scene long enough.
-- The screencast auto-advances; if you need more time on a scene while
-  recording, press **Space** to pause/resume, or **←/→** to step scenes.
+- The screencast is **manual** — finish a scene's line, then press **→** (or
+  Space, or click) to advance. Take all the time you need on any scene; nothing
+  moves until you say so. **←** steps back if you need a retake.
