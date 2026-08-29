@@ -190,6 +190,10 @@ def main():
     ap.add_argument("--paths", nargs="*", default=None,
                     help="limit the review to these pathspecs (e.g. src/"
                          " ':(exclude)vendor/'), passed to git diff")
+    ap.add_argument("--min-severity", choices=["critical", "major", "minor"],
+                    default="minor",
+                    help="only include findings at or above this severity"
+                         " in the review output (default: minor = all)")
     args = ap.parse_args()
     if args.post_comment and not args.pr:
         sys.exit("--post-comment requires --pr")
@@ -255,7 +259,11 @@ def main():
 
     meta = {"title": title, "pr_description": args.description or rev_range}
     (out_dir / "findings.json").write_text(json.dumps(result, indent=2))
-    write_report(out_dir / "report.md", meta, result["findings"], system)
+    order = ["critical", "major", "minor"]
+    threshold = order.index(args.min_severity)
+    kept = [f for f in result["findings"]
+            if order.index(f["severity"]) <= threshold]
+    write_report(out_dir / "report.md", meta, kept, system)
     write_html_report(out_dir / "report.html", meta, result)
     n = len(result["findings"])
     print(f"\n{n} confirmed finding(s)"
