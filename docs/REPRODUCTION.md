@@ -1,7 +1,7 @@
 # Reproduction guide
 
 Written for a clean environment. Total runtime for the full reproduction is
-roughly 35–50 minutes, most of it the v3 agent sweep; approximate API cost is
+roughly 60–80 minutes, most of it the v5 agent sweep; approximate API cost is
 in the results table in the README (per-case cost is recorded in every result
 JSON, so you can verify rather than trust this doc).
 
@@ -30,7 +30,7 @@ cd revguard
 
 # 1. Verify the benchmark itself: every anchor resolves, every post-PR
 #    test suite passes (the premise: CI is green, bugs are hidden).
-make validate            # ~1 min, no API calls
+make validate            # ~4 min (runs 22 post-PR test suites), no API calls
 
 # 2. Baseline: one direct prompt per case, diff pasted inline, no tools.
 make baseline            # ~15 min, 22 API calls

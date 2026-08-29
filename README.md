@@ -73,22 +73,29 @@ difference is attributable to workflow design, not model choice.
 ## The benchmark
 
 You cannot measure a reviewer without ground truth, so the project includes
-one: **Ledgerly**, a small expense-tracking service (Python stdlib + sqlite,
-16 passing tests), and **16 pull requests** against it containing **35
-seeded defects** with anchor-based labels — SQL injection, path traversal,
-float money corruption, missing WHERE clauses, IDOR, stale caches,
-lexicographic money sorting, tests weakened to sneak a bug past CI, and
-more. Two PRs are completely clean, to measure false-positive discipline.
-Four are "tier 2": larger, noisier diffs and cross-file bugs whose
-wrongness is only visible outside the diff.
+one: **Ledgerly**, an expense-tracking service written for this benchmark
+(Python stdlib + sqlite; the tier-3 "Pro" variant is ~1,400 LOC across 10
+modules with 53 passing tests), and **22 pull requests** against it
+containing **61 seeded defects** with anchor-based labels — SQL injection,
+path traversal, float money corruption, missing WHERE and JOIN
+predicates, IDOR, stale caches, lexicographic money sorting, a schema
+change that silently breaks an untouched module, tests weakened or
+shaped to sneak a bug past CI, and more. Two PRs are completely clean,
+to measure false-positive discipline. The cases come in tiers: 16 small
+PRs (tiers 1–2) and six **tier-3** PRs — 150–400 line multi-file diffs
+with refactor noise, cross-module bugs invisible from the diff alone,
+and defects that only execution exposes.
 
 Every case's post-PR test suite **passes** — by construction, the benchmark
-measures exactly what CI misses. `make validate` re-proves this in about a
-minute with zero API calls.
+measures exactly what CI misses. `make validate` re-proves this in a few
+minutes with zero API calls.
 
-The matching rule (same file, line within ±6 of the labeled anchor,
+The matching rule (same file, line within ±6 of a labeled anchor,
 category not required) was fixed before any system ran and applies
-identically to baseline and agent. See `eval/score.py`.
+identically to baseline and agent — see `eval/score.py`. Labels were
+refined in two documented adjudication rounds (`docs/CHANGELOG.md`);
+both rounds raised the *baseline's* score, which is how you know they
+were honest.
 
 ## Results
 
@@ -170,7 +177,7 @@ with Python 3.10+, pytest, and a logged-in Claude Code CLI.
 
 ```
 target_repo/     Ledgerly, the codebase under review (all tests pass)
-cases/           16 PR cases: changed files + anchor-based ground truth
+cases/           22 PR cases: changed files + anchor-based ground truth
 baseline/        the fair baseline: one prompt, diff inline, no tools
 agent/           RevGuard pipeline (configs v1-v4 = changelog iterations)
 eval/            fixed scoring rule + comparison table
