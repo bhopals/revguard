@@ -1,0 +1,432 @@
+<title>RevGuard Demo Reel</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+:root{
+  --ink:#0f1115; --surface:#181b22; --surface2:#20242d; --line:#2b303b;
+  --fg:#e8eaed; --muted:#8b94a3; --faint:#5c6472;
+  --accent:#4fd6c9; --accent-dim:#2a6f6a;
+  --crit:#ff6b6b; --major:#f5a623; --pass:#54d18c;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+  --sans:"IBM Plex Sans",system-ui,sans-serif;
+  --disp:"Bricolage Grotesque",var(--sans);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:#08090c; color:var(--fg); font-family:var(--sans);
+  display:grid; place-items:center; overflow:hidden;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* ---- 16:9 stage, letterboxed, type locked to frame via container units ---- */
+.stage{
+  position:relative; width:min(100vw,177.78vh); height:min(56.25vw,100vh);
+  background:
+    radial-gradient(120% 80% at 15% -10%, #171b24 0%, transparent 55%),
+    radial-gradient(140% 90% at 100% 120%, #12211f 0%, transparent 50%),
+    var(--ink);
+  container-type:size; overflow:hidden; isolation:isolate;
+}
+.stage::after{ /* subtle scanline/vignette for screen-recorded depth */
+  content:""; position:absolute; inset:0; pointer-events:none; z-index:6;
+  box-shadow:inset 0 0 12cqh 2cqh rgba(0,0,0,.45);
+}
+
+/* ---- chrome: wordmark, counter, progress, caption ---- */
+.mark{
+  position:absolute; top:4cqh; left:5cqw; z-index:5;
+  font-family:var(--mono); font-weight:600; font-size:2.2cqh;
+  letter-spacing:.02em; color:var(--fg); display:flex; align-items:center; gap:.6em;
+}
+.mark b{color:var(--accent)}
+.dot{width:1.1cqh;height:1.1cqh;border-radius:50%;background:var(--accent);
+  box-shadow:0 0 2cqh var(--accent)}
+.counter{
+  position:absolute; top:4cqh; right:5cqw; z-index:5;
+  font-family:var(--mono); font-size:2cqh; color:var(--muted);
+  font-variant-numeric:tabular-nums; letter-spacing:.04em;
+}
+.progress{position:absolute; left:0; bottom:0; height:.7cqh; width:100%;
+  background:rgba(255,255,255,.05); z-index:7}
+.bar{height:100%; width:0; background:linear-gradient(90deg,var(--accent-dim),var(--accent))}
+.caption{
+  position:absolute; left:8cqw; right:8cqw; bottom:4.5cqh; z-index:5;
+  text-align:center; font-size:2.5cqh; line-height:1.35; color:var(--fg);
+  text-wrap:balance; min-height:3.4cqh; opacity:.94;
+  text-shadow:0 .3cqh 2cqh rgba(0,0,0,.7);
+}
+.caption .k{color:var(--accent)}
+
+/* ---- scene machinery ---- */
+.scene{
+  position:absolute; inset:0; z-index:2;
+  padding:11cqh 8cqw 12cqh; display:flex; flex-direction:column;
+  justify-content:center; gap:3.2cqh;
+  opacity:0; transform:scale(1.012); transition:opacity .6s ease, transform .6s ease;
+  pointer-events:none;
+}
+.scene.active{opacity:1; transform:none; z-index:3}
+.eyebrow{font-family:var(--mono); font-size:2cqh; letter-spacing:.28em;
+  text-transform:uppercase; color:var(--accent)}
+h1{font-family:var(--disp); font-weight:800; font-size:8.2cqh; line-height:1.02;
+  letter-spacing:-.015em; text-wrap:balance}
+h2{font-family:var(--disp); font-weight:700; font-size:5.6cqh; line-height:1.05;
+  letter-spacing:-.01em; text-wrap:balance}
+.lead{font-size:3.3cqh; line-height:1.4; color:var(--fg); max-width:60ch; text-wrap:balance}
+.lead.muted{color:var(--muted)}
+.hi{color:var(--accent)}
+.hicrit{color:var(--crit)} .himaj{color:var(--major)} .hipass{color:var(--pass)}
+
+/* staggered reveal for children of an active scene marked .rise */
+.scene .rise{opacity:0; transform:translateY(2.2cqh); transition:opacity .5s ease, transform .5s ease}
+.scene.active .rise{opacity:1; transform:none}
+.scene.active .rise:nth-child(1){transition-delay:.12s}
+.scene.active .rise:nth-child(2){transition-delay:.28s}
+.scene.active .rise:nth-child(3){transition-delay:.46s}
+.scene.active .rise:nth-child(4){transition-delay:.64s}
+.scene.active .rise:nth-child(5){transition-delay:.82s}
+.scene.active .rise:nth-child(6){transition-delay:1s}
+
+/* ---- title scene ---- */
+#s1{justify-content:center; gap:2.4cqh}
+.rule-badge{font-family:var(--mono); font-size:2.4cqh; color:var(--accent);
+  border:1px solid var(--accent-dim); border-radius:999px; padding:1.1cqh 2.4cqw;
+  display:inline-flex; align-items:center; gap:.7em; width:max-content;
+  background:rgba(79,214,201,.06)}
+.tag{font-size:3cqh; color:var(--muted); max-width:52ch}
+
+/* ---- stat tiles (benchmark) ---- */
+.tiles{display:grid; grid-template-columns:repeat(4,1fr); gap:2.4cqw}
+.tile{background:var(--surface); border:1px solid var(--line); border-radius:1.6cqh;
+  padding:3.4cqh 2cqw; display:flex; flex-direction:column; gap:.8cqh}
+.tile .n{font-family:var(--disp); font-weight:800; font-size:7cqh; line-height:1;
+  font-variant-numeric:tabular-nums; letter-spacing:-.02em}
+.tile .l{font-size:2.3cqh; color:var(--muted); line-height:1.25}
+.tile.accent .n{color:var(--accent)} .tile.pass .n{color:var(--pass)}
+
+/* ---- terminal ---- */
+.term{background:#0c0e13; border:1px solid var(--line); border-radius:1.4cqh;
+  overflow:hidden; box-shadow:0 3cqh 8cqh rgba(0,0,0,.45); width:100%}
+.term-bar{display:flex; align-items:center; gap:1cqw; padding:1.6cqh 2cqw;
+  border-bottom:1px solid var(--line); background:var(--surface)}
+.term-bar i{width:1.5cqh;height:1.5cqh;border-radius:50%;display:block}
+.term-bar i:nth-child(1){background:#ff5f56}.term-bar i:nth-child(2){background:#ffbd2e}
+.term-bar i:nth-child(3){background:#27c93f}
+.term-bar span{margin-left:1cqw; font-family:var(--mono); font-size:1.9cqh; color:var(--faint)}
+.term-body{padding:2.6cqh 2.4cqw; font-family:var(--mono); font-size:2.35cqh;
+  line-height:1.6; color:#c9d1d9; white-space:pre-wrap}
+.term-body .ln{opacity:0; transform:translateY(.8cqh); transition:opacity .35s, transform .35s}
+.scene.active .term-body .ln{opacity:1; transform:none}
+.term-body .prompt{color:var(--accent)} .term-body .cmt{color:var(--faint)}
+.term-body .ok{color:var(--pass)} .term-body .err{color:var(--crit)}
+.term-body .warnv{color:var(--major)} .term-body .cyan{color:var(--accent)}
+.term-body .final{color:var(--fg); font-weight:600}
+/* per-line stagger */
+.term-body .ln:nth-child(1){transition-delay:.15s}.term-body .ln:nth-child(2){transition-delay:.4s}
+.term-body .ln:nth-child(3){transition-delay:.65s}.term-body .ln:nth-child(4){transition-delay:.9s}
+.term-body .ln:nth-child(5){transition-delay:1.15s}.term-body .ln:nth-child(6){transition-delay:1.4s}
+.term-body .ln:nth-child(7){transition-delay:1.65s}.term-body .ln:nth-child(8){transition-delay:1.9s}
+.term-body .ln:nth-child(9){transition-delay:2.15s}.term-body .ln:nth-child(10){transition-delay:2.4s}
+.term-body .ln:nth-child(11){transition-delay:2.65s}.term-body .ln:nth-child(12){transition-delay:2.9s}
+
+/* ---- pipeline diagram ---- */
+.pipe{display:flex; align-items:center; gap:1.6cqw; justify-content:center; flex-wrap:nowrap}
+.pcol{display:flex; flex-direction:column; gap:1.4cqh}
+.node{background:var(--surface); border:1px solid var(--line); border-radius:1.2cqh;
+  padding:1.8cqh 1.6cqw; font-family:var(--mono); font-size:2.1cqh; text-align:center;
+  min-width:15cqw}
+.node.rev{border-color:var(--accent-dim)}
+.node.ver{border-color:var(--accent); background:rgba(79,214,201,.08); color:var(--fg);
+  box-shadow:0 0 3cqh rgba(79,214,201,.15)}
+.node small{display:block; color:var(--muted); font-size:1.6cqh; margin-top:.5cqh}
+.arrow{color:var(--faint); font-size:3.4cqh; font-family:var(--mono)}
+.node.rep{border-color:var(--pass)}
+
+/* ---- finding cards ---- */
+.finds{display:flex; flex-direction:column; gap:2cqh}
+.find{display:grid; grid-template-columns:auto 1fr; gap:2cqw; align-items:start;
+  background:var(--surface); border:1px solid var(--line); border-radius:1.4cqh;
+  padding:2.6cqh 2.4cqw; border-left:.7cqw solid var(--crit)}
+.sev{font-family:var(--mono); font-size:1.8cqh; font-weight:600; letter-spacing:.08em;
+  color:var(--crit); border:1px solid var(--crit); border-radius:.7cqh;
+  padding:.7cqh 1cqw; height:max-content; white-space:nowrap}
+.find .loc{font-family:var(--mono); font-size:2.2cqh; color:var(--accent)}
+.find .desc{font-size:2.5cqh; line-height:1.35; color:var(--fg); margin-top:.6cqh}
+.badge-conf{font-family:var(--mono); font-size:2cqh; color:var(--pass);
+  display:inline-flex; align-items:center; gap:.5em; margin-top:1cqh}
+
+/* ---- results table ---- */
+table{width:100%; border-collapse:collapse; font-size:2.5cqh}
+th,td{padding:1.8cqh 1.4cqw; text-align:right; border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left}
+th{font-family:var(--mono); font-size:1.9cqh; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--muted); font-weight:500}
+td{font-variant-numeric:tabular-nums}
+tr.win td{color:var(--fg)} tr.win .sys{color:var(--accent); font-weight:600}
+.f1big{font-family:var(--disp); font-weight:800}
+.stability{margin-top:2cqh; font-size:2.6cqh; color:var(--muted)}
+.stability b{color:var(--fg)} .up{color:var(--crit)} .flat{color:var(--pass)}
+
+/* ---- changelog bars ---- */
+.bars{display:grid; grid-template-columns:repeat(6,1fr); gap:2cqw; align-items:end;
+  height:34cqh; padding-top:2cqh; position:relative}
+.baseline-line{position:absolute; left:0; right:0; border-top:2px dashed var(--faint)}
+.baseline-line span{position:absolute; right:0; top:-3cqh; font-family:var(--mono);
+  font-size:1.8cqh; color:var(--faint)}
+.colbar{display:flex; flex-direction:column; align-items:center; justify-content:flex-end;
+  gap:1cqh; height:100%}
+.colbar .fill{width:70%; background:var(--surface2); border:1px solid var(--line);
+  border-radius:.6cqh .6cqh 0 0; transform:scaleY(0); transform-origin:bottom;
+  transition:transform .7s cubic-bezier(.2,.7,.3,1)}
+.scene.active .colbar .fill{transform:scaleY(1)}
+.colbar.best .fill{background:linear-gradient(180deg,var(--accent),var(--accent-dim));
+  border-color:var(--accent)}
+.colbar.below .fill{background:#3a2530; border-color:#5a3340}
+.colbar .v{font-family:var(--mono); font-size:2cqh; color:var(--fg); font-variant-numeric:tabular-nums}
+.colbar .lab{font-family:var(--mono); font-size:1.9cqh; color:var(--muted)}
+.colbar.best .lab{color:var(--accent)}
+.colbar .fill{position:relative}
+
+/* ---- dogfood list ---- */
+.dogf{display:flex; flex-direction:column; gap:1.8cqh}
+.dogline{display:flex; align-items:center; gap:1.6cqw; font-size:2.9cqh}
+.dogline .ic{font-family:var(--mono); font-size:2.8cqh; width:3cqw}
+.dogline.seed .ic{color:var(--pass)} .dogline.real .ic{color:var(--major)}
+.dogline.fix .ic{color:var(--accent)}
+.closeurl{font-family:var(--mono); font-size:3cqh; color:var(--accent); margin-top:1cqh}
+
+@media (prefers-reduced-motion: reduce){
+  .scene,.rise,.term-body .ln,.colbar .fill{transition:none !important}
+  .scene .rise,.term-body .ln{opacity:1;transform:none}
+  .colbar .fill{transform:scaleY(1)}
+}
+
+/* hint overlay */
+.hint{position:absolute; bottom:2cqh; left:50%; transform:translateX(-50%);
+  font-family:var(--mono); font-size:1.7cqh; color:var(--faint); z-index:8; opacity:.7}
+.paused .hint{color:var(--accent); opacity:1}
+</style>
+
+<div class="stage" id="stage" tabindex="0" aria-label="RevGuard demo reel">
+  <div class="mark"><span class="dot"></span>Rev<b>Guard</b></div>
+  <div class="counter" id="counter">01 / 10</div>
+
+  <!-- 1 -->
+  <section class="scene" id="s1">
+    <div class="rule-badge rise">▹ one rule</div>
+    <h1 class="rise">Code review that<br>proves every finding.</h1>
+    <div class="tag rise">No finding reaches a human until a second agent has tried to
+      disprove it — by running the code — and failed.</div>
+  </section>
+
+  <!-- 2 -->
+  <section class="scene" id="s2">
+    <div class="eyebrow rise">the problem</div>
+    <h2 class="rise">AI review bots cry wolf.</h2>
+    <div class="lead rise">They spray plausible comments that are mostly wrong, so
+      engineers learn to ignore them. CI catches what tests cover — humans catch what
+      tests <span class="hi">miss</span>.</div>
+    <div class="lead muted rise">The job isn't “find more issues.” It's
+      <span class="hi">“only tell me things that are true, with evidence.”</span></div>
+  </section>
+
+  <!-- 3 -->
+  <section class="scene" id="s3">
+    <div class="eyebrow rise">how we measure it</div>
+    <h2 class="rise">A benchmark of real bugs.</h2>
+    <div class="tiles rise">
+      <div class="tile accent"><div class="n">22</div><div class="l">pull requests to review</div></div>
+      <div class="tile"><div class="n">61</div><div class="l">planted, labeled bugs</div></div>
+      <div class="tile"><div class="n">2</div><div class="l">clean PRs (false-positive test)</div></div>
+      <div class="tile pass"><div class="n">100%</div><div class="l">of test suites pass — we measure what CI misses</div></div>
+    </div>
+  </section>
+
+  <!-- 4 -->
+  <section class="scene" id="s4">
+    <div class="eyebrow rise">the benchmark is honest</div>
+    <div class="term rise">
+      <div class="term-bar"><i></i><i></i><i></i><span>make validate</span></div>
+      <div class="term-body"><span class="ln"><span class="prompt">$</span> make validate</span>
+<span class="ln"><span class="ok">ok</span>   case20_recurring_v2: tests pass, 3 defects, diff 108 lines</span>
+<span class="ln"><span class="ok">ok</span>   case21_perf_reports: tests pass, 3 defects, diff 57 lines</span>
+<span class="ln"><span class="ok">ok</span>   case22_notifications_api: tests pass, 4 defects, diff 81 lines</span>
+<span class="ln"><span class="cmt">   … 22 cases, every post-PR suite green …</span></span>
+<span class="ln"><span class="final">All cases valid.</span></span></div>
+    </div>
+    <div class="lead muted rise">Every bug is hidden from CI. Zero API calls — just proof.</div>
+  </section>
+
+  <!-- 5 -->
+  <section class="scene" id="s5">
+    <div class="eyebrow rise">the pipeline</div>
+    <div class="pipe rise">
+      <div class="pcol">
+        <div class="node rev">correctness<small>+ robustness</small></div>
+        <div class="node rev">security</div>
+        <div class="node rev">test-adequacy</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node">merge<small>+ dedupe</small></div>
+      <div class="arrow">→</div>
+      <div class="node ver">adversarial<br>verifier<small>fresh sandbox · a shell · “prove it wrong”</small></div>
+      <div class="arrow">→</div>
+      <div class="node rep">report<small>only survivors</small></div>
+    </div>
+    <div class="lead muted rise">Reviewers read the whole repo, not just the diff. Every
+      finding must survive execution before a human sees it.</div>
+  </section>
+
+  <!-- 6 -->
+  <section class="scene" id="s6">
+    <div class="eyebrow rise">a live review — a “clean” performance refactor</div>
+    <div class="term rise">
+      <div class="term-bar"><i></i><i></i><i></i><span>revguard — case21_perf_reports</span></div>
+      <div class="term-body"><span class="ln"><span class="prompt">$</span> python3 agent/run.py --config v5 --case cases/case21_perf_reports</span>
+<span class="ln"><span class="cyan">reviewer_correctness</span> → 2 findings   <span class="cmt">security → 0   tests → 0</span></span>
+<span class="ln"><span class="cyan">verifier</span>: 2 in → 2 <span class="ok">CONFIRMED</span></span>
+<span class="ln"><span class="final">case21_perf_reports: 2 raw → 2 merged → 2 final  (92.3s, $0.44)</span></span></div>
+    </div>
+    <div class="finds rise">
+      <div class="find"><div class="sev">CRITICAL</div><div>
+        <div class="loc">ledgerly/reports.py:44</div>
+        <div class="desc">The refactor's new JOIN lost its month filter — every budget now sums spending <b>across all time</b>.</div></div></div>
+      <div class="find"><div class="sev">CRITICAL</div><div>
+        <div class="loc">ledgerly/db.py:100</div>
+        <div class="desc">New <code>CREATE INDEX</code> without <code>IF NOT EXISTS</code> — crashes the app the <b>second</b> time the database is opened.</div></div></div>
+    </div>
+  </section>
+
+  <!-- 7 -->
+  <section class="scene" id="s7">
+    <div class="eyebrow rise">evidence, not opinion</div>
+    <div class="term rise">
+      <div class="term-bar"><i></i><i></i><i></i><span>verifier sandbox — “prove the reopen-crash wrong”</span></div>
+      <div class="term-body"><span class="ln"><span class="cmt"># open a real database file twice, like production does</span></span>
+<span class="ln"><span class="prompt">$</span> python3 -c "from ledgerly.db import Database; \</span>
+<span class="ln">    Database('/tmp/t.db').close(); Database('/tmp/t.db')"</span>
+<span class="ln"><span class="cmt">Traceback (most recent call last):</span></span>
+<span class="ln"><span class="err">sqlite3.OperationalError: index idx_expenses_user_category already exists</span></span>
+<span class="ln"><span class="cyan">verdict: CONFIRMED</span> — reproduced on 2nd open; tests use <span class="cmt">:memory:</span>, never reopen</span></div>
+    </div>
+    <div class="lead rise">The verifier didn't guess the crash was <span class="hi">likely</span>.
+      It reproduced it — then explained why CI stayed green.</div>
+  </section>
+
+  <!-- 8 -->
+  <section class="scene" id="s8">
+    <div class="eyebrow rise">results — same cases, same model, one scoring rule</div>
+    <table class="rise">
+      <thead><tr><th>tier-3 (large multi-file PRs)</th><th>found</th><th>recall</th><th>precision</th><th>F1</th><th>false pos</th></tr></thead>
+      <tbody>
+        <tr><td class="sys">baseline · 1 prompt</td><td>19/22</td><td>0.86</td><td>0.90</td><td class="f1big">0.884</td><td>2</td></tr>
+        <tr class="win"><td class="sys">RevGuard v5</td><td>20/22</td><td>0.91</td><td>0.95</td><td class="f1big hi">0.930</td><td>1</td></tr>
+      </tbody>
+    </table>
+    <div class="stability rise">Run twice, end to end: RevGuard's false positives held at
+      <b class="flat">3 → 3</b>. The baseline's <b class="up">tripled, 6 → 18</b>. That
+      instability <span class="hi">is</span> the cry-wolf failure mode — measured.</div>
+    <div class="lead muted rise">On <b>small</b> PRs the base model is already perfect
+      (39/39). We report that, not hide it — build where the model breaks.</div>
+  </section>
+
+  <!-- 9 -->
+  <section class="scene" id="s9">
+    <div class="eyebrow rise">it wasn't a straight line — tier-3 F1 by version</div>
+    <div class="bars rise">
+      <div class="baseline-line" style="bottom:calc(2cqh + 32cqh * 0.884)"><span>baseline 0.884</span></div>
+      <div class="colbar below"><div class="fill" style="height:87.2%"></div><div class="v">.872</div><div class="lab">v1</div></div>
+      <div class="colbar below"><div class="fill" style="height:85.7%"></div><div class="v">.857</div><div class="lab">v2</div></div>
+      <div class="colbar below"><div class="fill" style="height:77.3%"></div><div class="v">.773</div><div class="lab">v3</div></div>
+      <div class="colbar below"><div class="fill" style="height:80.9%"></div><div class="v">.809</div><div class="lab">v4</div></div>
+      <div class="colbar best"><div class="fill" style="height:93%"></div><div class="v">.930</div><div class="lab">v5</div></div>
+      <div class="colbar"><div class="fill" style="height:88.4%;background:var(--faint)"></div><div class="v">base</div><div class="lab">ref</div></div>
+    </div>
+    <div class="lead muted rise">v1 — tools plus a cautious prompt — was <span class="hicrit">worse</span>
+      than the baseline. The verifier once confirmed <b>54/54</b> findings, a rubber stamp:
+      truth is the wrong gate for advice. Giving it a <span class="hi">policy gate</span> was the biggest gain.</div>
+  </section>
+
+  <!-- 10 -->
+  <section class="scene" id="s10">
+    <div class="eyebrow rise">it works on real code — including its own</div>
+    <h2 class="rise">We ran it on its own pull request.</h2>
+    <div class="dogf rise">
+      <div class="dogline seed"><span class="ic">✓</span> caught the bug we planted</div>
+      <div class="dogline real"><span class="ic">⚠</span> + argument injection — its verifier reproduced it with a live exploit</div>
+      <div class="dogline real"><span class="ic">⚠</span> + prompt injection via untrusted PR text</div>
+      <div class="dogline fix"><span class="ic">→</span> both real bugs fixed — the tool made its own next version safer</div>
+    </div>
+    <div class="closeurl rise">github.com/bhopals/revguard</div>
+  </section>
+
+  <div class="caption" id="caption"></div>
+  <div class="progress"><div class="bar" id="bar"></div></div>
+  <div class="hint" id="hint">Space pause · ← → step · R restart · F fullscreen</div>
+</div>
+
+<script>
+const SCENES = [
+  {d:12, cap:'RevGuard — a reviewer that <span class="k">proves</span> every finding.'},
+  {d:28, cap:'The job isn\'t to find more — it\'s to say only what\'s <span class="k">true</span>.'},
+  {d:25, cap:'22 pull requests, 61 planted bugs — and every test suite <span class="k">passes</span>.'},
+  {d:15, cap:'<span class="k">make validate</span> — the bugs are real and hidden from CI.'},
+  {d:35, cap:'Three reviewers in parallel → an <span class="k">adversarial verifier</span> → report.'},
+  {d:40, cap:'A “clean” refactor, two <span class="k">critical</span> bugs its tests never catch.'},
+  {d:30, cap:'The verifier <span class="k">reproduced</span> the crash — evidence, not opinion.'},
+  {d:40, cap:'Tier-3: F1 <span class="k">0.930</span> vs 0.884 — and stable across runs.'},
+  {d:20, cap:'Adding agent machinery made it <span class="k">worse</span> until we measured why.'},
+  {d:26, cap:'It found real security bugs in <span class="k">itself</span> — and we fixed them.'},
+];
+const scenes = [...document.querySelectorAll('.scene')];
+const bar = document.getElementById('bar');
+const caption = document.getElementById('caption');
+const counter = document.getElementById('counter');
+const stage = document.getElementById('stage');
+const TOTAL = SCENES.reduce((a,s)=>a+s.d,0);
+let i=0, t0=performance.now(), elapsedBefore=0, paused=false, raf;
+
+function show(n){
+  i=(n+SCENES.length)%SCENES.length;
+  scenes.forEach((s,k)=>s.classList.toggle('active',k===i));
+  caption.innerHTML=SCENES[i].cap;
+  counter.textContent=String(i+1).padStart(2,'0')+' / '+String(SCENES.length).padStart(2,'0');
+  elapsedBefore=SCENES.slice(0,i).reduce((a,s)=>a+s.d,0);
+  t0=performance.now();
+}
+function frame(now){
+  if(!paused){
+    const within=(now-t0)/1000;
+    const elapsed=elapsedBefore+within;
+    bar.style.width=Math.min(100,(elapsed/TOTAL)*100)+'%';
+    if(within>=SCENES[i].d){
+      if(i===SCENES.length-1){ paused=true; document.body.classList.add('paused');
+        document.getElementById('hint').textContent='fin · R to replay'; }
+      else show(i+1);
+    }
+  }
+  raf=requestAnimationFrame(frame);
+}
+function togglePause(){ paused=!paused; document.body.classList.toggle('paused',paused);
+  if(!paused) t0=performance.now()-0; }
+function restart(){ elapsedBefore=0; bar.style.width='0%'; paused=false;
+  document.body.classList.remove('paused'); show(0); }
+
+addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();togglePause();}
+  else if(e.code==='ArrowRight'){paused&&(paused=false);show(i+1);}
+  else if(e.code==='ArrowLeft'){show(i-1);}
+  else if(e.key==='r'||e.key==='R'){restart();}
+  else if(e.key==='f'||e.key==='F'){ if(!document.fullscreenElement) stage.requestFullscreen?.(); else document.exitFullscreen?.(); }
+});
+stage.addEventListener('click',togglePause);
+// ?scene=N&freeze jumps to a scene and holds it (for capture / review)
+const params=new URLSearchParams(location.search);
+const jump=parseInt(params.get('scene'));
+if(!isNaN(jump)){ show(jump-1); if(params.has('freeze')){paused=true;document.body.classList.add('paused');} }
+else show(0);
+requestAnimationFrame(frame);
+</script>
