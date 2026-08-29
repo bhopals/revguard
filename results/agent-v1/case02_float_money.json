@@ -1,0 +1,25 @@
+{
+  "case": "case02_float_money",
+  "system": "agent-v1",
+  "findings": [
+    {
+      "file": "ledgerly/utils.py",
+      "line": 20,
+      "category": "correctness",
+      "title": "Float rounding error silently produces wrong cent amounts",
+      "description": "parse_money now computes `int(dollars * 100)` using binary floats. Due to standard float imprecision, this truncates to the wrong integer for common inputs, e.g. parse_money(\"19.99\") returns 1998 instead of 1999 because 19.99*100 == 1998.9999999999998 in Python floats, and int() truncates toward zero. Similarly parse_money(\"0.29\") returns 28 instead of 29. This is exactly the class of bug integer-cents storage is meant to avoid, and it silently shortchanges users/records instead of raising. The regression is undetected because the test suite only checks amounts (12.50, 12, 0.5) whose float products happen to be exact.",
+      "reviewer": "generalist"
+    }
+  ],
+  "raw_finding_count": 3,
+  "stages": [
+    {
+      "stage": "reviewer_generalist",
+      "findings": 3,
+      "seconds": 48.2,
+      "cost_usd": 0.0923728
+    }
+  ],
+  "seconds": 48.2,
+  "cost_usd": 0.0924
+}

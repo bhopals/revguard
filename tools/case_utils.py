@@ -86,14 +86,27 @@ def resolve_anchor(case_dir, rel_path, anchor):
 
 
 def ground_truth(case_dir):
-    """Ground-truth defects with anchors resolved to line numbers."""
+    """Ground-truth defects with anchors resolved to line numbers.
+
+    Each defect carries `points`: every (file, line) location where
+    reporting it is acceptable — the primary anchor plus any
+    `alt_anchors` added during the label adjudication pass (see
+    docs/CHANGELOG in the README). `file`/`line` remain the primary
+    location for display.
+    """
     meta = load_meta(case_dir)
     out = []
     for d in meta.get("defects", []):
+        points = [(d["file"], resolve_anchor(case_dir, d["file"], d["anchor"]))]
+        for alt in d.get("alt_anchors", []):
+            points.append(
+                (alt["file"], resolve_anchor(case_dir, alt["file"], alt["anchor"]))
+            )
         out.append({
             "id": d["id"],
-            "file": d["file"],
-            "line": resolve_anchor(case_dir, d["file"], d["anchor"]),
+            "file": points[0][0],
+            "line": points[0][1],
+            "points": points,
             "category": d["category"],
             "severity": d["severity"],
             "description": d["description"],

@@ -26,27 +26,34 @@ from tools.case_utils import ground_truth, list_cases, load_meta  # noqa: E402
 LINE_TOLERANCE = 6
 
 
+def _hits(finding, defect):
+    """True when the finding lands on any acceptable point of the defect."""
+    try:
+        line = int(finding.get("line", -999))
+    except (TypeError, ValueError):
+        return False
+    points = defect.get("points") or [(defect["file"], defect["line"])]
+    return any(
+        finding.get("file") == pf and abs(line - pl) <= LINE_TOLERANCE
+        for pf, pl in points
+    )
+
+
 def match_case(gt, findings):
     """Greedy match findings to ground truth. Returns (matched_ids, fp_list)."""
     remaining = {d["id"]: d for d in gt}
     matched = {}
     false_pos = []
     for f in findings:
-        hit = None
-        for did, d in remaining.items():
-            if f.get("file") == d["file"] and abs(int(f.get("line", -999)) - d["line"]) <= LINE_TOLERANCE:
-                hit = did
-                break
+        hit = next((did for did, d in remaining.items() if _hits(f, d)), None)
         if hit is not None:
             matched[hit] = f
             del remaining[hit]
         else:
             # A duplicate report of an already-matched defect is not a FP.
             dup = any(
-                f.get("file") == d["file"]
-                and abs(int(f.get("line", -999)) - gd["line"]) <= LINE_TOLERANCE
-                for did, d in matched.items()
-                for gd in [next(g for g in gt if g["id"] == did)]
+                _hits(f, next(g for g in gt if g["id"] == did))
+                for did in matched
             )
             if not dup:
                 false_pos.append(f)

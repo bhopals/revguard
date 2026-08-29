@@ -1,0 +1,26 @@
+{
+  "case": "case03_pagination",
+  "system": "agent-v1",
+  "findings": [
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 62,
+      "category": "correctness",
+      "title": "page_count off-by-one when total is an exact multiple of page_size",
+      "severity": "major",
+      "description": "`total // page_size + 1` always adds one extra page. If a user has exactly 20 expenses and page_size is 20, page_count(20, 20) returns 2 instead of 1, so a client rendering pagination controls will show a bogus second page that, when requested via list_expenses, returns an empty list. Similarly total=0 returns 1 instead of 0 pages. The correct formula is ceiling division, e.g. `(total + page_size - 1) // page_size` (with a total==0 special case).",
+      "reviewer": "generalist"
+    }
+  ],
+  "raw_finding_count": 3,
+  "stages": [
+    {
+      "stage": "reviewer_generalist",
+      "findings": 3,
+      "seconds": 44.0,
+      "cost_usd": 0.087219
+    }
+  ],
+  "seconds": 44.0,
+  "cost_usd": 0.0872
+}

@@ -1,0 +1,26 @@
+{
+  "case": "case10_note_search",
+  "system": "agent-v1",
+  "findings": [
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 68,
+      "category": "security",
+      "severity": "critical",
+      "title": "SQL injection via unvalidated `sort` parameter",
+      "description": "search_expenses() builds the ORDER BY clause with an f-string using the caller-supplied `sort` argument directly: f\" ORDER BY {sort} DESC\" (line 68), with no whitelist check against actual column names (contrast with `category` in list_expenses/add_expense, which is validated against VALID_CATEGORIES). Any caller that exposes `sort` from user input (e.g. a `?sort=` query parameter on a search endpoint, which is the obvious use case for this PR) allows arbitrary SQL injection, e.g. sort=\"id; DROP TABLE expenses; --\" or a UNION-based injection to exfiltrate data from other tables/users (bypassing the user_id scoping entirely). Because params are otherwise parameterized correctly, this is the sole injection point and must be fixed by validating `sort` against a fixed set of allowed column names before interpolating it.",
+      "reviewer": "generalist"
+    }
+  ],
+  "raw_finding_count": 1,
+  "stages": [
+    {
+      "stage": "reviewer_generalist",
+      "findings": 1,
+      "seconds": 17.5,
+      "cost_usd": 0.0437678
+    }
+  ],
+  "seconds": 17.5,
+  "cost_usd": 0.0438
+}

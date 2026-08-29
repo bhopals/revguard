@@ -1,0 +1,41 @@
+{
+  "case": "case16_top_categories",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/reports.py",
+      "line": 61,
+      "category": "correctness",
+      "title": "Sorting by formatted money string, not numeric value",
+      "description": "ranked sorts on format_money(kv[1]) (a string like \"$9.00\", \"$10.00\") instead of the raw integer cents. Lexicographic string comparison gives wrong ordering for amounts with different digit counts (e.g. \"$9.00\" > \"$10.00\" > \"$100.00\" alphabetically), so the 'top n' categories returned can be incorrect whenever spending amounts differ in digit length.",
+      "severity": "critical"
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 60,
+      "category": "correctness",
+      "title": "Ties not broken alphabetically as documented",
+      "description": "The docstring claims 'ties are broken alphabetically', but the sort key only uses format_money(kv[1]) with no secondary key on category name. Equal-spend categories retain whatever order they appear in the dict (insertion/iteration order from monthly_summary), not alphabetical order, so rendering is not stable as claimed.",
+      "severity": "major"
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 66,
+      "category": "robustness",
+      "title": "No validation of n",
+      "description": "n is used directly in ranked[:n] with no check that it is a positive integer. Passing n=0 silently returns an empty list, and a negative n (e.g. -1) silently truncates from the end via Python slice semantics instead of raising an error, likely producing confusing dashboard output instead of a clear failure.",
+      "severity": "minor"
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 58,
+      "category": "test-adequacy",
+      "title": "No tests for top_categories",
+      "description": "The diff adds a new public function with nontrivial ranking/formatting/tie-break behavior but includes no unit tests covering ordering, tie-breaking, n truncation, or empty-month behavior.",
+      "severity": "major"
+    }
+  ],
+  "seconds": 15.0,
+  "cost_usd": 0.0237228,
+  "num_turns": 1
+}

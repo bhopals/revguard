@@ -28,6 +28,14 @@
       "category": "security",
       "severity": "major",
       "description": "register/login take the password as a positional command-line argument, exposing it in shell history and the process list (ps). It should be read via getpass or stdin."
+    },
+    {
+      "id": "c13-d4",
+      "file": "ledgerly/cli.py",
+      "anchor": "TOKEN_PATH.write_text(token)",
+      "category": "security",
+      "severity": "minor",
+      "description": "The token file is created with default umask permissions and only chmod'ed to 0600 afterwards, leaving a window where other local users can read the session token. Create it with restrictive permissions atomically (os.open with 0o600). Added during label adjudication."
     }
   ]
 }

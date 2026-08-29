@@ -1,0 +1,35 @@
+{
+  "case": "case14_multi_currency",
+  "system": "agent-v1",
+  "findings": [
+    {
+      "file": "ledgerly/reports.py",
+      "line": 25,
+      "category": "correctness",
+      "title": "monthly_summary sums amount_cents across different currencies as if they were the same currency",
+      "severity": "critical",
+      "description": "add_expense now accepts a currency parameter (ledgerly/expenses.py:18), but monthly_summary's SQL does `SUM(amount_cents) ... GROUP BY category` with no grouping or filtering by currency. If a user records e.g. 100 cents in USD food and 100 units in EUR food, the summary reports total=200 for 'food' as though both were the same currency, silently corrupting the reported total. budget_status (ledgerly/reports.py:34-57) then compares this mixed-currency sum directly against a budget's limit_cents, producing incorrect over_budget flags and remaining amounts (e.g. a user with a $50 USD food budget who also logs a 5000 JPY expense would be flagged over-budget based on a nonsensical cross-currency sum). The PR description claims 'Reporting is unchanged,' but by allowing non-USD data into a reporting path that assumes a single currency, the PR silently breaks the correctness guarantee that totals are meaningful money sums.",
+      "reviewer": "generalist"
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 18,
+      "category": "robustness",
+      "title": "currency parameter is not validated, unlike category",
+      "severity": "major",
+      "description": "add_expense validates category against VALID_CATEGORIES but performs no validation on the new currency argument (ledgerly/expenses.py:18-20). Any string \u2014 empty string, lowercase 'usd', whitespace, or an arbitrary long value \u2014 is accepted and persisted verbatim. This lets inconsistent currency codes (e.g. 'USD' vs 'usd') enter the same user's data, which further defeats any future or existing currency-aware aggregation and allows storing garbage values with no error surfaced to the caller.",
+      "reviewer": "generalist"
+    }
+  ],
+  "raw_finding_count": 2,
+  "stages": [
+    {
+      "stage": "reviewer_generalist",
+      "findings": 2,
+      "seconds": 32.0,
+      "cost_usd": 0.08168199999999999
+    }
+  ],
+  "seconds": 32.0,
+  "cost_usd": 0.0817
+}

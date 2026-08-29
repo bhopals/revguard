@@ -1,0 +1,49 @@
+{
+  "case": "case15_summary_cache",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/reports.py",
+      "line": 31,
+      "category": "correctness",
+      "title": "Cache never invalidated when expenses change",
+      "description": "monthly_summary results are cached indefinitely per (user_id, month) with no invalidation hook. If an expense is added, edited, or deleted for a month that was already queried (e.g. a user adds an expense mid-session, or a budget is corrected), subsequent calls will keep returning the stale cached totals instead of recomputing from the database. Since the dashboard is described as calling this on every page load, users will see incorrect, out-of-date spending totals for the remainder of the process's lifetime.",
+      "severity": "critical"
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 32,
+      "category": "correctness",
+      "title": "Cached dict is returned by reference and can be mutated by callers",
+      "description": "The dict stored in _summary_cache is returned directly to callers rather than a copy. If any caller mutates the returned mapping (e.g. adds a derived key, adjusts a total for display), that mutation corrupts the cached value for all future callers with the same (user_id, month) key, silently propagating incorrect data.",
+      "severity": "major"
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 21,
+      "category": "robustness",
+      "title": "Unbounded, process-lifetime cache with no eviction",
+      "description": "_summary_cache is a plain module-level dict with no size limit, TTL, or eviction policy. Over the lifetime of a long-running server process, it will accumulate an entry for every (user_id, month) ever queried, leading to unbounded memory growth.",
+      "severity": "major"
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 21,
+      "category": "robustness",
+      "title": "Cache is not thread-safe",
+      "description": "If the service handles requests concurrently (e.g. via threads), concurrent reads/writes to the shared _summary_cache dict are not synchronized. While CPython dict operations are individually atomic, the read-then-write pattern (check key, query DB, store result) is not, so concurrent requests for the same new key can both miss the cache and both write, and there's no guarantee against other race conditions as the cache logic evolves.",
+      "severity": "minor"
+    },
+    {
+      "file": "tests/test_ledgerly.py",
+      "line": 108,
+      "category": "test-adequacy",
+      "title": "Test does not verify cache invalidation or staleness behavior",
+      "description": "The new test only checks that two consecutive calls to monthly_summary return equal results after data was already inserted before either call; it never exercises the actual risk introduced by this PR, which is that adding/editing an expense between calls does not update the cached summary. A test that inserts an expense, calls monthly_summary, inserts another expense, and calls monthly_summary again would have caught the stale-cache defect.",
+      "severity": "major"
+    }
+  ],
+  "seconds": 19.3,
+  "cost_usd": 0.0300388,
+  "num_turns": 1
+}

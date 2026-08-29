@@ -1,0 +1,65 @@
+{
+  "case": "case13_cli",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/cli.py",
+      "line": 123,
+      "category": "robustness",
+      "title": "CLI always exits with status 0, even on failure",
+      "description": "main() catches every exception from args.func(), prints an 'error: ...' message, but still falls through to `return 0`. Any caller relying on the exit code (shell scripts, cron jobs, CI) will see success even when registration, login, add, list, or summary fail (auth errors, bad input, DB errors, etc.). The except block should re-raise or return a non-zero exit code, and main() should propagate that to sys.exit().",
+      "severity": "major"
+    },
+    {
+      "file": "ledgerly/cli.py",
+      "line": 91,
+      "category": "security",
+      "title": "Passwords accepted as plaintext CLI arguments",
+      "description": "register and login take the password as a positional command-line argument (args.password). Command-line arguments are visible to other local users via `ps`/`/proc/<pid>/cmdline` and are recorded in shell history files, leaking the plaintext password. Passwords should be read via a hidden prompt (e.g. getpass) instead of being passed as an argv token.",
+      "severity": "major"
+    },
+    {
+      "file": "ledgerly/cli.py",
+      "line": 96,
+      "category": "security",
+      "title": "Passwords accepted as plaintext CLI arguments",
+      "description": "Same issue as register: login's password positional argument exposes the plaintext password through process listings and shell history.",
+      "severity": "major"
+    },
+    {
+      "file": "ledgerly/cli.py",
+      "line": 56,
+      "category": "correctness",
+      "title": "Floating point conversion can produce incorrect amount in cents",
+      "description": "amount_cents = int(float(args.amount) * 100) is subject to binary floating point rounding error (e.g. some inputs like '19.99' or '0.1' can yield 1998.9999999999998 before truncation), silently storing the wrong number of cents for a monetary amount. Money should be parsed via Decimal or string-based cent conversion, not float arithmetic, and int() truncates rather than rounds, compounding the error.",
+      "severity": "major"
+    },
+    {
+      "file": "ledgerly/cli.py",
+      "line": 32,
+      "category": "security",
+      "title": "Token file briefly created with default (non-restrictive) permissions",
+      "description": "_save_token calls TOKEN_PATH.write_text(token) before TOKEN_PATH.chmod(0o600). When the file does not yet exist, write_text creates it with permissions governed by the process umask (commonly 644), so the auth token is briefly world/group-readable before the chmod call narrows it. On a multi-user system this is a race window during which another local user could read the token. The file should be created with restrictive permissions from the start (e.g. open with os.open using O_CREAT and mode 0o600) rather than tightened after the fact.",
+      "severity": "minor"
+    },
+    {
+      "file": "ledgerly/cli.py",
+      "line": 120,
+      "category": "robustness",
+      "title": "Database open failure is not caught, produces raw traceback",
+      "description": "db = Database(DB_PATH) is called before the try/except block in main(). If opening the database fails (e.g. permission denied, disk full, corrupt file, invalid LEDGERLY_DB path), the exception propagates uncaught and crashes with a raw Python traceback instead of the user-friendly 'error: ...' message used for all other failures.",
+      "severity": "minor"
+    },
+    {
+      "file": "ledgerly/cli.py",
+      "line": 1,
+      "category": "test-adequacy",
+      "title": "No tests for the new CLI module",
+      "description": "This PR adds a full CLI (register/login/add/list/summary, token caching, argument parsing) but includes no automated tests. There is no coverage for token persistence/permissions, error-path exit codes, amount parsing, or argument wiring, so regressions in this new user-facing surface would not be caught.",
+      "severity": "major"
+    }
+  ],
+  "seconds": 60.1,
+  "cost_usd": 0.0792408,
+  "num_turns": 1
+}
