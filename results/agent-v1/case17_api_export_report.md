@@ -1,0 +1,23 @@
+# Code review: CSV export endpoint + household API
+
+> Adds GET /export (download expenses as CSV), and first household endpoints: GET /household/balances and POST /household/expenses. Also tidies the handler layer: field validation renamed to _require_fields and route registrations grouped by resource.
+
+**Verdict: request changes.** 3 blocking finding(s), 1 critical.
+
+## 1. [CRITICAL] Missing membership check on GET /household/balances (IDOR)
+
+`ledgerly/api.py:162` — security
+
+get_household_balances only requires a valid bearer token and never verifies the authenticated user is a member of the requested household. Any authenticated user can pass an arbitrary household_id (sequential integer ID) to view another household's per-member net balances and user IDs, e.g. authed("GET", "/household/balances", ownToken, params={"household_id": "<someone else's hid>"}) returns 200 with that household's financial data. Contrast with post_household_expense, which correctly enforces membership via household.add_shared_expense -> require_member. household.balances() itself performs no access check (it just returns {} for a non-existent household and full data for any valid id), so the handler must add the check and doesn't.
+
+## 2. [MAJOR] Float-based money parsing truncates cents for common amounts
+
+`ledgerly/api.py:176` — correctness
+
+post_household_expense computes cents as int(float(request.body["amount"]) * 100) instead of reusing utils.parse_money (used everywhere else, e.g. post_expense, post_budget). Due to binary floating-point representation, many valid two-decimal amounts round down when multiplied by 100 and truncated, e.g. float("19.99")*100 == 1998.9999999999998, so int(...) yields 1998 cents ($19.98) instead of 1999 ($19.99). This silently records the wrong amount for a shared household expense (no error raised), corrupting balances/settlement math. It also rejects '$'-prefixed amounts that parse_money accepts (float('$12.50') raises ValueError), producing inconsistent behavior between /expenses and /household/expenses for the same input format.
+
+## 3. [MAJOR] CSV export does not escape fields, corrupting output for notes with commas/quotes/newlines
+
+`ledgerly/api.py:200` — robustness
+
+get_export builds CSV rows via a plain f-string join without quoting or escaping any field. expenses.add_expense allows arbitrary note text up to 500 characters with no restriction on commas, quotes, or newlines. A note like "lunch, with friends" produces the line "2026-03-01,food,12.50,lunch, with friends", which has 5 comma-separated fields instead of 4, shifting/breaking any CSV parser reading the export. A note containing a newline splits into extra bogus rows. This is a new, user-reachable endpoint whose entire purpose is producing valid CSV, so any expense note with a comma or newline (very plausible free text) breaks the exported file's structure.

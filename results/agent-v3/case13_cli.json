@@ -1,0 +1,95 @@
+{
+  "case": "case13_cli",
+  "system": "agent-v3",
+  "findings": [
+    {
+      "file": "ledgerly/cli.py",
+      "line": 56,
+      "category": "correctness",
+      "title": "Ad-hoc float-based money parsing bypasses parse_money, causing cent-level rounding errors and allowing negative/zero amounts",
+      "severity": "critical",
+      "description": "cmd_add computes amount_cents with `int(float(args.amount) * 100)` instead of calling the existing `utils.parse_money`, which is the codebase's designated helper for exactly this conversion. Two concrete failures result: (1) Floating point imprecision plus truncation (not rounding) means common inputs lose a cent, e.g. `ledgerly add 19.99 food 2026-03-01` \u2014 `float('19.99') * 100` evaluates to 1998.9999999999998 in IEEE-754 double precision, and `int()` truncates toward zero, storing amount_cents=1998 ($19.98) instead of 1999 ($19.99). This silently corrupts the ledger's monetary records. (2) parse_money explicitly rejects non-positive amounts ('amount must be positive'), but the CLI's inline conversion has no such check, so `ledgerly add -5.00 food 2026-03-01` or `ledgerly add 0 food 2026-03-01` succeeds and inserts a negative or zero expense, corrupting `reports.monthly_summary` totals and budget_status comparisons for that user/month.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Confirmed both sub-claims by direct execution. (1) `int(float('19.99')*100)` evaluates to 1998 in Python (float imprecision + truncation), reproducing the cent-loss bug exactly as described. (2) Ran cmd_add end-to-end against a real Database/auth flow: adding amount '19.99' printed 'added expense #1: $19.98 food' (off by a cent), and adding '-5.00' and '0' both succeeded silently, printing '-$5.00' and '$0.00' with no error. Read utils.parse_money and confirmed it does reject non-positive amounts ('amount must be positive') and rounds via regex-based cent extraction rather than float math, but cli.py's cmd_add (line ~56) uses `int(float(args.amount) * 100)` instead of calling parse_money. Also checked expenses.add_expense \u2014 it performs no validation on amount_cents, so there is no downstream safeguard catching these values on the code path.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "ledgerly/cli.py",
+      "line": 90,
+      "category": "security",
+      "title": "Password passed as CLI positional argument leaks credentials",
+      "description": "register/login take `password` as a plain positional argument (lines 90-91, 95-96, invoked as e.g. `ledgerly register alice mypassword`). On any multi-user or shared system, the full command line \u2014 including the plaintext password \u2014 is visible to other local users via `ps`/`/proc/<pid>/cmdline` for the process lifetime, and is written verbatim into the shell history file (~/.bash_history, ~/.zsh_history). The existing auth.py takes care to hash passwords with PBKDF2 and compare tokens in constant time, but this CLI undoes that protection by exposing the raw password on the command line before it ever reaches auth.register/auth.login. severity=major.",
+      "severity": "major",
+      "reviewer": "security",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/cli.py: register/login subparsers define `password` as a plain positional argparse argument (lines 90-91, 95-96), consistent with the module's own docstring example `ledgerly register alice mypassword`. Grepped the file for getpass/masking and found none \u2014 there is no alternative secure input path. Demonstrated via a live subprocess + `ps -o command=` that a positional CLI argument is fully visible in the process command line for the process lifetime (ps output showed the plaintext marker value), confirming the exposure mechanism the reviewer describes. Combined with well-established shell history persistence (~/.bash_history etc.) for positional args, the finding accurately describes a real, reachable credential-exposure defect introduced by this PR.",
+        "adjusted_severity": "major"
+      }
+    },
+    {
+      "file": "ledgerly/cli.py",
+      "line": 118,
+      "category": "test-adequacy",
+      "severity": "major",
+      "title": "No tests at all for new cli.py, including the always-succeeds exit code",
+      "description": "This PR adds a full CLI module (register/login/add/list/summary) but the test suite (tests/test_ledgerly.py) has zero references to `cli` \u2014 none of the new commands are exercised. In particular, `main()` (ledgerly/cli.py:118-125) catches every exception from `args.func(db, args)`, prints it to stderr, and then unconditionally `return 0`s, so a failed `add` (e.g. bad amount format), failed `login` (bad password), or `_require_user` AuthError (not logged in) all report a process exit code of 0/success. Any script or CI job invoking `ledgerly` would see a false success. No test exercises this path, so a regression or the introduction of this exact silent-failure behavior would not be caught by CI.",
+      "reviewer": "tests",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/cli.py:118-125 confirming main() catches Exception, prints to stderr, and unconditionally returns 0 in all paths (including via `finally` for db.close()). Executed the actual CLI: `python3 -m ledgerly.cli add 12.50 food 2026-03-01 --note lunch` without logging in printed 'error: not logged in...' to stderr but exited with code 0; `python3 -m ledgerly.cli login nosuchuser wrongpass` similarly printed 'error: unknown user' and exited 0. Also confirmed via grep that tests/test_ledgerly.py contains zero occurrences of 'cli', so none of this behavior is tested.",
+        "adjusted_severity": "major"
+      }
+    },
+    {
+      "file": "ledgerly/cli.py",
+      "line": 32,
+      "category": "security",
+      "title": "Auth token file briefly created world/group-readable before chmod",
+      "description": "_save_token() calls TOKEN_PATH.write_text(token) which creates/truncates the file using the process umask (typically 0o644, world-readable) and only restricts permissions afterward via chmod(0o600) on the next line. Between the write and the chmod there is a window in which the plaintext session token is readable by any other local user on a multi-user host (and if the token file already exists as a symlink planted by another local user, write_text follows it, writing the token to the symlink target). The token should be created with 0600 permissions atomically (e.g., os.open with O_CREAT and mode 0o600 before writing) rather than relying on a post-hoc chmod.",
+      "severity": "minor",
+      "reviewer": "security",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/cli.py:31-33, matching the diff exactly: _save_token calls TOKEN_PATH.write_text(token) then TOKEN_PATH.chmod(0o600). Reproduced with python3: under default umask 0o022, write_text() creates the file with mode 0o644 (verified via os.stat before chmod), and only the subsequent chmod call restricts it to 0o600. This confirms a real TOCTOU window where the plaintext token is world/group-readable momentarily. write_text opens in 'w' mode without O_EXCL/O_NOFOLLOW, so it does follow pre-existing symlinks as described. The fix suggestion (os.open with O_CREAT|mode 0o600 atomically) is valid and not already present anywhere in the file.",
+        "adjusted_severity": "minor"
+      }
+    }
+  ],
+  "raw_finding_count": 4,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 1,
+      "seconds": 47.4,
+      "cost_usd": 0.10085360000000002
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 2,
+      "seconds": 52.9,
+      "cost_usd": 0.1124174
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 1,
+      "seconds": 27.8,
+      "cost_usd": 0.0475392
+    },
+    {
+      "stage": "verifier",
+      "in": 4,
+      "confirmed": 4,
+      "seconds": 36.7
+    }
+  ],
+  "seconds": 89.6,
+  "cost_usd": 0.495
+}

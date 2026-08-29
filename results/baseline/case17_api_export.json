@@ -1,0 +1,65 @@
+{
+  "case": "case17_api_export",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/api.py",
+      "line": 160,
+      "category": "security",
+      "severity": "critical",
+      "title": "No membership check on household balances endpoint",
+      "description": "get_household_balances takes household_id from the request and calls household.balances(db, hid) without verifying that request.user_id is actually a member of that household. Any authenticated user can view any other household's balances simply by guessing/incrementing household_id, leaking other users' financial data (IDOR)."
+    },
+    {
+      "file": "ledgerly/api.py",
+      "line": 175,
+      "category": "security",
+      "severity": "critical",
+      "title": "No membership check on shared expense creation",
+      "description": "post_household_expense accepts an arbitrary household_id and calls household.add_shared_expense without verifying request.user_id belongs to that household. Any authenticated user can inject expenses into a household they are not a member of, corrupting other households' balances (IDOR / broken access control)."
+    },
+    {
+      "file": "ledgerly/api.py",
+      "line": 174,
+      "category": "correctness",
+      "severity": "major",
+      "title": "Household expense amount parsed with float instead of parse_money",
+      "description": "Unlike every other money-handling handler (post_expense, post_budget), this uses `int(float(request.body[\"amount\"]) * 100)` instead of `parse_money(str(...))`. Float multiplication is not exact for many decimal values (e.g. 19.99 * 100 == 1998.9999999999998), so `int()` truncation can silently store the wrong amount (off by a cent), and it also skips whatever input validation/rejection parse_money performs (e.g. malformed strings, negative amounts)."
+    },
+    {
+      "file": "ledgerly/api.py",
+      "line": 198,
+      "category": "security",
+      "severity": "major",
+      "title": "CSV export not escaped, vulnerable to injection and data corruption",
+      "description": "The CSV row is built with a raw f-string joining fields with commas, with no quoting/escaping of category or note. If a category or note contains a comma or newline the row will be misaligned/corrupted. If note begins with '=', '+', '-', or '@', the exported file can trigger CSV/formula injection when opened in Excel/Sheets, potentially executing attacker-controlled formulas against the user who downloads their own export (stored injection via categories/notes entered by another flow)."
+    },
+    {
+      "file": "ledgerly/api.py",
+      "line": 159,
+      "category": "robustness",
+      "severity": "minor",
+      "title": "Unvalidated household_id causes unhandled exception",
+      "description": "`hid = int(hid)` will raise an uncaught ValueError (resulting in a 500) if a non-numeric household_id query parameter is supplied, instead of returning a clean 400 ApiError like other handlers do for malformed input."
+    },
+    {
+      "file": "ledgerly/api.py",
+      "line": 176,
+      "category": "robustness",
+      "severity": "minor",
+      "title": "Unvalidated household_id in POST body causes unhandled exception",
+      "description": "`int(request.body[\"household_id\"])` will raise an uncaught ValueError (500 error) if household_id is non-numeric; _require_fields only checks presence, not type, so malformed input is not converted into a proper 400 response."
+    },
+    {
+      "file": "tests/test_api.py",
+      "line": 92,
+      "category": "test-adequacy",
+      "severity": "major",
+      "title": "No tests for cross-household access control or CSV special-character handling",
+      "description": "The new tests only cover the happy path where the requesting user is a member of the household they query/post to, and export content with plain values. There is no test asserting that a user cannot read balances or post expenses for a household they don't belong to (which would have caught the missing authorization checks), and no test for CSV export with commas/newlines/formula-leading characters in category or note (which would have caught the CSV injection/corruption issue)."
+    }
+  ],
+  "seconds": 56.8,
+  "cost_usd": 0.0813858,
+  "num_turns": 1
+}

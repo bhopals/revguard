@@ -1,0 +1,33 @@
+{
+  "case": "case21_perf_reports",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/reports.py",
+      "line": 44,
+      "category": "correctness",
+      "severity": "critical",
+      "title": "budget_status no longer filters expenses by month",
+      "description": "The original code computed spend via monthly_summary(db, user_id, month), which restricted expenses to the requested month. The new LEFT JOIN only matches on e.user_id = b.user_id AND e.category = b.category \u2014 there is no condition tying e.spent_on (or any date field) to the requested month. As a result, 'spent' now sums ALL expenses ever recorded in that category for the user, across every month, not just the target month. This inflates spend and 'over_budget' flags for any category with expense history from other months, directly contradicting the PR's 'No behavior change intended' claim."
+    },
+    {
+      "file": "ledgerly/db.py",
+      "line": 110,
+      "category": "robustness",
+      "severity": "critical",
+      "title": "synchronous=OFF risks database corruption, not just lost writes",
+      "description": "Setting PRAGMA synchronous = OFF disables fsync calls SQLite normally issues before critical transaction boundaries. Per SQLite documentation, with synchronous=OFF an OS crash or power loss (not just an application crash) can leave the database file corrupted, not merely missing the most recent transactions as would happen with the safer 'NORMAL' setting under WAL mode. For a financial ledger storing expenses/budgets, this is an unacceptable durability/integrity regression introduced purely for a performance PR that claims no behavior change."
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 40,
+      "category": "test-adequacy",
+      "severity": "major",
+      "title": "No test covers month-boundary filtering for budget_status",
+      "description": "The diff changes the core aggregation query for budget_status but includes no test verifying that expenses outside the requested month are excluded from 'spent'. Such a test would have caught the missing month filter in the LEFT JOIN (see the correctness finding), which silently changes production behavior."
+    }
+  ],
+  "seconds": 51.0,
+  "cost_usd": 0.0657468,
+  "num_turns": 1
+}

@@ -72,13 +72,20 @@ Finding under review:
 The full post-PR repository is in your working directory. Try to falsify the claim (prefer execution), then output your verdict JSON."""
 
 
+def _line_of(f):
+    try:
+        return int(f.get("line", -999))
+    except (TypeError, ValueError):
+        return -999
+
+
 def dedupe(findings):
     """Merge findings that point at the same file within 3 lines."""
     kept = []
     for f in sorted(findings, key=lambda x: ({"critical": 0, "major": 1,
                                               "minor": 2}.get(x.get("severity"), 3))):
-        if any(k["file"] == f.get("file")
-               and abs(int(k["line"]) - int(f.get("line", -999))) <= 3
+        if any(k.get("file") == f.get("file")
+               and abs(_line_of(k) - _line_of(f)) <= 3
                for k in kept):
             continue
         kept.append(f)
@@ -166,6 +173,7 @@ def review_diff(config_name, title, description, diff, files, workdir,
     merged = dedupe(all_findings)
 
     # Stage 2: adversarial verification (parallel, fresh sandbox each).
+    rejected = []
     if cfg["verify"] and merged:
         verify_seconds = 0.0
         confirmed = []
@@ -193,6 +201,8 @@ def review_diff(config_name, title, description, diff, files, workdir,
                     if verdict.get("adjusted_severity"):
                         f["severity"] = verdict["adjusted_severity"]
                     confirmed.append(f)
+                else:
+                    rejected.append(f)
         total_seconds += verify_seconds
         stage_meta.append({"stage": "verifier",
                            "in": len(merged), "confirmed": len(confirmed),
@@ -203,6 +213,7 @@ def review_diff(config_name, title, description, diff, files, workdir,
 
     return {
         "findings": final,
+        "rejected_findings": rejected,
         "raw_finding_count": len(all_findings),
         "merged_count": len(merged),
         "stages": stage_meta,
@@ -281,11 +292,14 @@ def main():
     ap.add_argument("--config", required=True, choices=list(CONFIGS))
     ap.add_argument("--case", help="single case directory")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--run-name", help="results dir name (default"
+                    " agent-<config>); use e.g. agent-v5-r2 for repeat runs")
     args = ap.parse_args()
 
-    out_root = ROOT / "results" / f"agent-{args.config}"
-    traj_root = ROOT / "trajectories" / f"agent-{args.config}"
-    work_root = Path(tempfile.gettempdir()) / f"revguard-work-{args.config}"
+    name = args.run_name or f"agent-{args.config}"
+    out_root = ROOT / "results" / name
+    traj_root = ROOT / "trajectories" / name
+    work_root = Path(tempfile.gettempdir()) / f"revguard-work-{name}"
 
     cases = [Path(args.case)] if args.case else list_cases()
     for case in cases:

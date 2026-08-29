@@ -1,0 +1,65 @@
+{
+  "case": "case15_summary_cache",
+  "system": "agent-v3",
+  "findings": [
+    {
+      "file": "ledgerly/reports.py",
+      "line": 32,
+      "category": "correctness",
+      "severity": "critical",
+      "title": "Cache never invalidated on writes, causing stale monthly summaries and budget status",
+      "description": "`_summary_cache` (line 22) is populated on first call and never cleared or updated by `set_budget`, `add_expense`, or `delete_expense` (checked in ledgerly/expenses.py \u2014 none of them touch `_summary_cache`). Once `monthly_summary(db, user_id, month)` is called for a given (user_id, month), any subsequent expense added, edited, or deleted for that same month is invisible: the function keeps returning the old totals for the lifetime of the process. Since `budget_status` (line 52) calls `monthly_summary` internally, this also makes `over_budget`/`remaining` calculations silently wrong after any edit \u2014 e.g. a user adds an expense that pushes them over budget, but the dashboard (which the PR description says calls this 'on every page load') keeps reporting them under budget because it hits the stale cache entry.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read reports.py: `_summary_cache` is a module-level dict, populated in monthly_summary and never cleared; grep across ledgerly/ shows no other reference to it (expenses.py's add_expense/delete_expense and reports.py's set_budget never touch it). Executed a reproduction: added a $7 transport expense, called monthly_summary (cached {transport:700}), added a second $50 expense, called monthly_summary again -> still returns {transport:700} (stale). Then set a $10 budget and called budget_status: it returned spent=$7.00, over_budget=False, even though true spend is $57.00 which exceeds the $10 limit. This directly confirms the described silent-stale-cache / wrong-budget-status defect.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "tests/test_ledgerly.py",
+      "line": 109,
+      "category": "test-adequacy",
+      "title": "New cache test cannot detect stale-cache bugs",
+      "severity": "major",
+      "description": "test_summary_cache_consistent only calls monthly_summary twice with no state change in between and asserts the two results are equal. This assertion would pass identically even if the caching code in reports.py did not exist at all, since re-querying unchanged data returns the same totals. The test never exercises the actual risky new behavior introduced by this PR: that the cache is never invalidated when expenses are added/edited/deleted after the first call. A test that adds an expense, calls monthly_summary once to populate the cache, adds another expense for the same user/month, and calls monthly_summary again would have caught the real bug (stale totals returned forever within a process) and would fail against the current implementation. As written, the test is a tautology with respect to the caching behavior it claims to verify.",
+      "reviewer": "tests",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read reports.py: _summary_cache has no invalidation anywhere in the codebase (grep confirms only set/get). Ran the test as written (test_summary_cache_consistent) \u2014 it passes, but by construction (no state change between the two monthly_summary calls) it would pass identically with no caching at all. Reproduced the reviewer's proposed stronger scenario via python -c: add expense -> call monthly_summary (populates cache) -> add another expense for same user/month -> call monthly_summary again. Result: second call returned stale totals ({'food': 300}) omitting the newly added 1000-cent expense, proving the real stale-cache bug exists and that the current test suite would not catch it.",
+        "adjusted_severity": "major"
+      }
+    }
+  ],
+  "raw_finding_count": 4,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 2,
+      "seconds": 47.1,
+      "cost_usd": 0.07680019999999999
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 1,
+      "seconds": 62.9,
+      "cost_usd": 0.1156342
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 1,
+      "seconds": 18.0,
+      "cost_usd": 0.043722800000000006
+    },
+    {
+      "stage": "verifier",
+      "in": 2,
+      "confirmed": 2,
+      "seconds": 24.2
+    }
+  ],
+  "seconds": 87.1,
+  "cost_usd": 0.3544
+}

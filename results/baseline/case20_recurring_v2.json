@@ -1,0 +1,49 @@
+{
+  "case": "case20_recurring_v2",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/recurring.py",
+      "line": 109,
+      "category": "correctness",
+      "severity": "critical",
+      "title": "Biweekly cadence generates an occurrence every week, not every second week",
+      "description": "The `else` branch handling `cadence == \"biweekly\"` in `occurrences_between` is byte-for-byte identical to the `weekly` branch above it: it walks every day in the range and appends every date matching `rule[\"weekday\"]`. There is no parity/skip logic (e.g. comparing elapsed weeks against a reference date) to only emit every second matching weekday. As a result, a 'biweekly' rule will materialize an expense every week, silently doubling the number of charges a user expects for a biweekly subscription. This is a money-affecting bug, not just a naming issue."
+    },
+    {
+      "file": "ledgerly/recurring.py",
+      "line": 33,
+      "category": "correctness",
+      "severity": "major",
+      "title": "No anchor/reference date exists to compute biweekly parity",
+      "description": "`create_rule` accepts `weekday` for both `weekly` and `biweekly` cadences and inserts into the same columns (`cadence`, `day_of_month`, `weekday`) with no new field capturing a start/reference date. 'Every second week' is only a meaningful concept relative to some anchor (e.g. rule creation date or first occurrence); without persisting that anchor, it's impossible to correctly determine which of the matching weekdays in a date range should be included, even if the loop logic in `occurrences_between` were fixed. The schema/API is missing the state needed to implement the feature at all."
+    },
+    {
+      "file": "ledgerly/recurring.py",
+      "line": 59,
+      "category": "correctness",
+      "severity": "major",
+      "title": "pause_rule is identical to deactivate_rule, so paused and deleted rules are indistinguishable",
+      "description": "`pause_rule` executes the exact same statement as the pre-existing `deactivate_rule` (`UPDATE recurring_rules SET active = 0 WHERE id = ?`). There is no separate state (e.g. a `paused` column) distinguishing 'temporarily suspended' from 'permanently deactivated/deleted'. Consequently `resume_rule` (`SET active = 1`) can reactivate *any* rule that was previously deactivated through the existing delete/deactivate path, not just ones the user explicitly paused \u2014 effectively allowing an inactive/deleted rule to be resurrected and start generating charges again."
+    },
+    {
+      "file": "tests/test_recurring.py",
+      "line": 87,
+      "category": "test-adequacy",
+      "severity": "major",
+      "title": "No test verifies pause/resume avoids retroactive catch-up charges",
+      "description": "The PR's stated goal is to let users 'suspend a subscription rule while keeping its history' \u2014 implying that time spent paused should not later be billed in bulk when resumed. `test_resume_reactivates` pauses and immediately resumes with no elapsed time, so it cannot detect whether resuming after a rule has been paused across one or more billing cycles causes `materialize_due` to back-generate all the occurrences that were skipped during the pause window. Given there is no persisted pause/resume timestamp anywhere in the diff, this scenario is both unverified and plausibly broken."
+    },
+    {
+      "file": "tests/test_recurring.py",
+      "line": 72,
+      "category": "test-adequacy",
+      "severity": "major",
+      "title": "Biweekly occurrence test cannot detect missing 'every second week' behavior",
+      "description": "`test_biweekly_occurrence` only checks an 8-day window (2026-03-02 to 2026-03-10) that contains exactly one candidate Monday. Since a correct biweekly implementation and the buggy weekly-equivalent implementation both return the same single date for such a short range, this test passes regardless of whether the skip-every-other-week logic exists at all, letting the critical bug in `occurrences_between` go undetected. A proper test needs a range spanning at least 3-4 weeks with an assertion that alternating weekdays are excluded."
+    }
+  ],
+  "seconds": 108.2,
+  "cost_usd": 0.1240178,
+  "num_turns": 1
+}
