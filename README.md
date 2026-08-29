@@ -151,7 +151,7 @@ experiment we removed for the opposite of the expected reason — is in
 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**. Every entry has measured
 numbers.
 
-## Use it on a real repository
+## Use it on a real repository or a live GitHub PR
 
 The benchmark proves the pipeline; `revguard.py` ships it:
 
@@ -159,17 +159,36 @@ The benchmark proves the pipeline; `revguard.py` ships it:
 python3 revguard.py --repo /path/to/repo --base main              # working tree
 python3 revguard.py --repo /path/to/repo --base main --head br    # a branch
 python3 revguard.py --repo . --base HEAD~1 --paths src/           # scoped
+python3 revguard.py --pr owner/repo#123                           # a GitHub PR
+python3 revguard.py --pr owner/repo#123 --post-comment            # + post review
+python3 revguard.py --pr owner/repo#123 --baseline                # fair baseline
 ```
 
 Output: `report.md`, a self-contained `report.html`, `findings.json`,
-and full trajectories, under `reviews/`. Dogfood result committed in
-this repo: RevGuard reviewed its own v5-hardening commit
-(`reviews/revguard-20260829-112851/`) and **approved it with zero
-findings** — the same discipline it shows on the benchmark's clean PRs,
-where no system run ever invented a finding. Dogfooding also caught two
-real CLI bugs before submission (prompts over argv hit the OS E2BIG
-limit on large diffs; generated files need pathspec scoping) — both
-fixed in the git history.
+and full trajectories, under `reviews/`.
+
+**It found real bugs in itself.** We opened a live PR on this repo adding
+a `--min-severity` flag ([PR #1](https://github.com/bhopals/revguard/pull/1),
+with one seeded crash) and ran `revguard.py --pr` on it. RevGuard flagged
+the seeded bug *and two real vulnerabilities we had just written into the
+`--pr` feature* — argument injection via a hostile git ref name (which its
+verifier reproduced by building a malicious ref) and prompt injection via
+untrusted PR text — then posted the review as a PR comment. Both are now
+fixed on `main` (`ea2375c`). Earlier dogfooding caught two more CLI bugs
+(argv size limit on large diffs; pathspec scoping). A separate run
+reviewed a clean commit and **approved it with zero findings** — the same
+discipline it shows on the benchmark's clean PRs. The tool improving its
+own next version is the whole workflow working end to end.
+
+### External validity — real escaped bugs (`replay/`)
+
+Beyond our seeded benchmark, `replay/` runs RevGuard on three real
+MIT-licensed OSS commits that shipped bugs past human review (TinyDB #445;
+a `schedule` refactor; `schedule` #517, which lived **~18 months** in
+released code). Both the baseline and RevGuard catch all three — these
+are small diffs, so per finding #1 the baseline keeps pace, but it proves
+the tool flags *real* defects, not just planted ones. See
+[replay/README.md](replay/README.md).
 
 ## Reproduction
 
