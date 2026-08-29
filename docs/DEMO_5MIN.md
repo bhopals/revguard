@@ -10,6 +10,7 @@ version with every step is in [DEMO_SCRIPT.md](DEMO_SCRIPT.md).
 |---|---|---|---|---|
 | 00 | Opening + the problem | ✓ | **keep (0:35)** | keep (0:35) |
 | 01 | `make validate` | ✓ | **keep (0:20)** | ✂ fold one line into 00 |
+| 01b | `make map` — codebase tour | ✓ | **keep (0:25)** | ✂ cut |
 | 02 | `make test` | ✓ | ✂ cut | ✂ cut |
 | 03 | Live review — watch it work | ✓ | **keep (1:10)** | keep (1:05) |
 | 04 | Open the report | ✓ | **keep (0:25)** | keep (0:22) |
@@ -41,8 +42,11 @@ what. So:
   (Or just narrate the pipeline over the report itself — the point of 03 in the
   4-min cut is the *idea*, not the wait.)
 
-Pure narration time: ~5:10 (5-min cut) / ~4:20 (4-min cut) at a brisk pace;
-step 03's run time overlaps your narration, so it doesn't simply add on top.
+Pure narration time: ~5:35 with the codebase tour (01b), ~5:10 without it, at a
+brisk pace; step 03's run time overlaps your narration, so it doesn't simply add
+on top. **For a hard 5:00 with the tour, drop step 01** (`make validate`) — the
+tour already tells the viewer the benchmark exists, and step 08 re-earns the
+"it's honest" point. The tour is the first thing to cut if you're long.
 
 **Before recording:** terminal in `revguard/` (font ~18pt); three browser tabs
 open — dashboard (`docs/dashboard.html`), report
@@ -78,6 +82,25 @@ make validate
 > planted by hand. This runs all 22 test suites, and here's the key: *every one
 > passes.* The bugs are real but invisible to the tests — so we're measuring
 > exactly what CI waves through. 'All cases valid' — the yardstick is honest."
+
+---
+
+## 01b · 25-second codebase tour (0:25)  *(optional; drop first if over time)*
+
+**RUN:**
+```bash
+make map
+```
+**SAY (over the printed tree):**
+> "Thirty seconds on what's actually here, because it's a real project, not a
+> notebook. Two things drive everything. The *benchmark* — a real app under
+> review, and twenty-two pull requests with sixty-one hand-labeled bugs. And the
+> *pipeline* — that's `agent/`: the reviewers, the verifier, and each agent's
+> instructions. Around them: a fair baseline to compare against, an `eval` folder
+> that scores everything, a CLI to run it on real repos, and `results` and
+> `trajectories` where every run and every agent transcript is saved as evidence.
+> A Makefile ties it together — validate, baseline, agent, eval. All public, all
+> reproducible. Okay — let's watch it review real code."
 
 ---
 

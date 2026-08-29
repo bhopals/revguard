@@ -204,6 +204,7 @@ Details in [../replay/README.md](../replay/README.md).
 
 | Goal | Command |
 |---|---|
+| Tour the project structure (no API) | `make map` |
 | Prove benchmark is honest (no API) | `make validate` |
 | Harness self-tests (no API) | `make test` |
 | Review one hard PR with the pipeline (live) | `python3 agent/run.py --config v5 --case case21_perf_reports --run-name live --force` |

@@ -69,6 +69,29 @@ rolls up into this scoreboard, which I'll come back to at the end."
 
 ---
 
+## 01b · `make map` — a quick tour of the codebase (~25 seconds)
+
+**RUN:**
+```bash
+make map
+```
+
+**SAY (over the printed tree):**
+> "Before I run it, half a minute on what's actually in here — because this is a
+> real, navigable project, not a one-off script. Everything hangs off two things.
+> The first is the *benchmark*: a real application under review, and the
+> twenty-two pull requests with the sixty-one bugs we just validated. The second
+> is the *pipeline* — that's the `agent` folder: the parallel reviewers, the
+> adversarial verifier, and each agent's actual instructions in `prompts`.
+> Everything else supports those two: a fair `baseline` to measure against, an
+> `eval` folder that does the scoring, a command-line tool to run it on real
+> repositories, and `results` and `trajectories`, where every run and every
+> agent's full transcript is written down as evidence. The Makefile ties it into
+> single commands — validate, baseline, agent, eval, test. It's all public and it
+> all reproduces from a clean checkout. Now let's watch it work."
+
+---
+
 ## 02 · `make test` — the harness tests itself (~2 seconds)
 
 **RUN:**

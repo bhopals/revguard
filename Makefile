@@ -1,7 +1,7 @@
 # RevGuard — reproduction entry points.
 # Requires: Python 3.10+, pytest, Claude Code CLI (logged in). No other deps.
 
-.PHONY: validate baseline agent eval test clean-results
+.PHONY: validate baseline agent eval test map clean-results
 
 # Sanity-check the benchmark: anchors resolve, every post-PR suite passes.
 validate:
@@ -25,3 +25,7 @@ clean-results:
 # Harness self-tests: scoring rules, dedupe, benchmark integrity.
 test:
 	python3 -m pytest tests/ -q
+
+# Print an annotated map of the project (for orientation / the demo tour).
+map:
+	python3 tools/project_map.py
