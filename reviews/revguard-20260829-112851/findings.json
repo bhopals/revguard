@@ -1,0 +1,28 @@
+{
+  "findings": [],
+  "rejected_findings": [],
+  "raw_finding_count": 0,
+  "merged_count": 0,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 0,
+      "seconds": 117.8,
+      "cost_usd": 0.32154119999999997
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 0,
+      "seconds": 52.5,
+      "cost_usd": 0.14583400000000002
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 0,
+      "seconds": 40.3,
+      "cost_usd": 0.1109536
+    }
+  ],
+  "seconds": 117.8,
+  "cost_usd": 0.5783
+}

@@ -1,0 +1,41 @@
+{
+  "case": "case20_recurring_v2",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/recurring.py",
+      "line": 106,
+      "category": "correctness",
+      "severity": "critical",
+      "title": "Biweekly cadence behaves identically to weekly",
+      "description": "The 'biweekly' branch of occurrences_between duplicates the weekly logic exactly: it walks every day between start and end and appends every date matching rule['weekday'], with no calculation of week parity relative to any anchor/reference date. There is no stored reference date on the rule to determine which weeks are 'on' weeks, so the code cannot possibly skip alternate weeks. As written, a 'biweekly' rule will fire every single week, silently double-charging users relative to the advertised cadence. The stray '# biweekly' comment on the matching line is misleading since the logic is unchanged from the weekly branch."
+    },
+    {
+      "file": "tests/test_recurring.py",
+      "line": 70,
+      "category": "test-adequacy",
+      "severity": "major",
+      "title": "Biweekly occurrence test cannot detect weekly-vs-biweekly bug",
+      "description": "test_biweekly_occurrence only checks an 8-day window (Mar 2 to Mar 10) that contains exactly one Monday. Since weekly and biweekly cadences produce identical results when the window contains only a single matching weekday, this test passes regardless of whether the biweekly skip-a-week logic is implemented at all. A correct test needs a range spanning at least 3-4 weeks and must assert that alternate weekday occurrences are excluded (e.g. expect [Mar 9, Mar 23] and explicitly confirm Mar 16 is absent), anchored to a known reference date."
+    },
+    {
+      "file": "ledgerly/recurring.py",
+      "line": 58,
+      "category": "correctness",
+      "severity": "major",
+      "title": "pause_rule is indistinguishable from deactivate_rule, so resume_rule can undo a permanent cancellation",
+      "description": "pause_rule sets the same 'active = 0' column that deactivate_rule already used for permanent cancellation. Since there is no separate state to mark 'paused' vs 'deactivated', calling resume_rule on a rule that a user previously deactivated (canceled) via deactivate_rule will silently reactivate and resume billing on a rule the user believed was permanently canceled. This conflation of two semantically different states in a single boolean column is a functional regression introduced by this PR."
+    },
+    {
+      "file": "tests/test_recurring.py",
+      "line": 87,
+      "category": "test-adequacy",
+      "severity": "minor",
+      "title": "No test for resume after a multi-period pause or for resume-on-deactivated-rule",
+      "description": "test_resume_reactivates only exercises pause immediately followed by resume on the same day, so it never exercises (a) whether resuming after a rule was paused across several missed billing periods produces an unexpected backlog of materialized expenses, or (b) whether resume_rule can incorrectly reactivate a rule that was canceled via deactivate_rule (see related finding). Both are plausible real-world scenarios that the test suite does not cover."
+    }
+  ],
+  "seconds": 89.7,
+  "cost_usd": 0.11017779999999999,
+  "num_turns": 1
+}
