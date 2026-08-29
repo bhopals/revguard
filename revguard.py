@@ -67,6 +67,9 @@ def main():
     ap.add_argument("--title", help="PR title (default: from last commit)")
     ap.add_argument("--description", default="", help="PR description")
     ap.add_argument("--out", default="reviews", help="output root")
+    ap.add_argument("--paths", nargs="*", default=None,
+                    help="limit the review to these pathspecs (e.g. src/"
+                         " ':(exclude)vendor/'), passed to git diff")
     args = ap.parse_args()
 
     repo = Path(args.repo).expanduser().resolve()
@@ -74,10 +77,11 @@ def main():
         sys.exit(f"{repo} is not a git repository")
 
     rev_range = f"{args.base}...{args.head}" if args.head else args.base
-    diff = git(repo, "diff", rev_range)
+    pathspec = ["--"] + args.paths if args.paths else []
+    diff = git(repo, "diff", rev_range, *pathspec)
     if not diff.strip():
         sys.exit("no changes to review")
-    files = git(repo, "diff", "--name-only", rev_range).split()
+    files = git(repo, "diff", "--name-only", rev_range, *pathspec).split()
     title = args.title or git(
         repo, "log", "-1", "--format=%s",
         args.head or "HEAD").strip() or "Working tree changes"

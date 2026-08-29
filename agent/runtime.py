@@ -44,8 +44,10 @@ def run_agent(prompt, *, system_prompt=None, cwd=None, allowed_tools=(),
 
 def _run_agent_once(prompt, *, system_prompt=None, cwd=None, allowed_tools=(),
                     model=None, trajectory_path=None, timeout=900):
+    # The prompt (which embeds the diff) goes over stdin, not argv:
+    # large diffs exceed the OS argument-size limit (E2BIG).
     cmd = [
-        "claude", "-p", prompt,
+        "claude", "-p",
         "--output-format", "stream-json", "--verbose",
         "--model", model or DEFAULT_MODEL,
         # Full isolation: no user/project settings, no MCP, file tools
@@ -60,6 +62,7 @@ def _run_agent_once(prompt, *, system_prompt=None, cwd=None, allowed_tools=(),
     start = time.time()
     proc = subprocess.run(
         cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout,
+        input=prompt,
     )
     elapsed = round(time.time() - start, 1)
     if trajectory_path:

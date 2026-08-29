@@ -1,0 +1,49 @@
+{
+  "case": "case18_import_v2",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/importers.py",
+      "line": 79,
+      "category": "correctness",
+      "severity": "major",
+      "title": "Category prefix matching is not actually case-insensitive",
+      "description": "category_for() calls desc.upper() but never normalizes `prefix` from category_map. A mapping key like {\"coffee\": \"food\"} or {\"Coffee\": \"food\"} will never match against the upper-cased description, silently falling through to DEFAULT_CATEGORY. Despite the docstring and PR description promising case-insensitive rules, matching only works if callers happen to type keys in all caps."
+    },
+    {
+      "file": "ledgerly/importers.py",
+      "line": 90,
+      "category": "correctness",
+      "severity": "major",
+      "title": "Duplicate key of (date, amount) causes silent data loss for distinct same-day transactions",
+      "description": "_is_duplicate dropped `note`/description from its matching criteria. Two unrelated legitimate transactions sharing the same date and amount (e.g. two separate $5 coffees bought the same day, or coincidental same-amount purchases from different merchants) will now be treated as duplicates and silently skipped on import, permanently losing real expense data with no error surfaced beyond an incremented skip counter. The previous (date, amount, note) key did not have this false-positive problem."
+    },
+    {
+      "file": "ledgerly/importers.py",
+      "line": 80,
+      "category": "robustness",
+      "severity": "minor",
+      "title": "Invalid category_map entries are validated lazily and inconsistently",
+      "description": "category_for only raises ImportError_ for an unknown target category when a row's description actually matches that prefix. If no row in a given statement happens to match the bad prefix, the invalid mapping silently passes and the import succeeds, so the same category_map can succeed or fail depending on unrelated statement content instead of being validated up front before any rows are processed."
+    },
+    {
+      "file": "ledgerly/importers.py",
+      "line": 109,
+      "category": "correctness",
+      "severity": "major",
+      "title": "Atomicity of add_expense inside the transaction is unverified",
+      "description": "import_statement wraps the loop in `with db.transaction():` and was careful to call `db.conn.execute(...)` (not `db.execute`) for the batch-row insert, implying `db.execute` may commit/manage its own transaction and not compose with an outer one. `add_expense` is still invoked unchanged and its internal implementation is not shown/verified to use the same connection-level call; if it uses `db.execute` internally the same way, each expense row could be committed independently regardless of the surrounding transaction, undermining the PR's core 'all-or-nothing batch' guarantee for exactly the failure scenarios it is meant to fix."
+    },
+    {
+      "file": "tests/test_importers.py",
+      "line": 69,
+      "category": "test-adequacy",
+      "severity": "major",
+      "title": "No test exercises the actual rollback/atomicity behavior",
+      "description": "test_atomic_batch only imports a fully valid statement and checks the happy-path counts; it never forces a mid-batch failure and then asserts that zero expenses and no import_batches row were persisted. test_mapping_to_unknown_category checks that ImportError_ is raised but likewise never checks the database was left untouched afterward. The PR's headline 'atomic batches' feature is therefore completely unverified by the test suite."
+    }
+  ],
+  "seconds": 131.1,
+  "cost_usd": 0.15413780000000002,
+  "num_turns": 1
+}
