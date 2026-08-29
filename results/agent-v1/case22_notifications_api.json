@@ -1,0 +1,46 @@
+{
+  "case": "case22_notifications_api",
+  "system": "agent-v1",
+  "findings": [
+    {
+      "file": "ledgerly/notify.py",
+      "line": 92,
+      "category": "correctness",
+      "severity": "critical",
+      "title": "Weekly digest is marked read immediately after creation, so it never appears as unread",
+      "description": "In send_weekly_digests, notify(db, uid, \"digest\", body) inserts a new unread notification (line 92), and the very next statement (lines 93-96) runs `UPDATE notifications SET read_at = ? WHERE user_id = ?` with no created_at/id filter, so it also marks the row just inserted as read. Since db.execute commits immediately (ledgerly/db.py:126-129), every digest notification is read_at-stamped before the function returns. Consequently notify.unread(db, uid) and the new GET /notifications endpoint never surface the digest to the user, and any delivery worker that (per the module docstring) 'reads unread rows' will never see it either \u2014 the digest is silently discarded even though send_weekly_digests reports it as 'sent'. The test added for this (tests/test_notify.py:47-52) is written so it cannot catch the bug: line 50 ends with `or True`, making that assertion always pass, and line 52's `<= 1` check passes whether 0 or 1 digests are unread.",
+      "reviewer": "generalist"
+    },
+    {
+      "file": "ledgerly/api.py",
+      "line": 146,
+      "category": "security",
+      "severity": "major",
+      "title": "GET /notifications allows reading any user's notifications via user_id parameter",
+      "description": "get_notifications takes uid from `request.params.get(\"user_id\", request.user_id)` instead of using the authenticated request.user_id directly. Any authenticated caller can pass `?user_id=<other_id>` to read another user's notification list (including budget-alert and digest bodies, which can reveal spending details). Every other authenticated GET handler in this file (get_expenses, get_summary, get_budgets) uses request.user_id exclusively with no client-supplied override; this handler is the only one that trusts a client-supplied user id for authorization, and there is no ownership/household check performed before returning the data.",
+      "reviewer": "generalist"
+    },
+    {
+      "file": "ledgerly/api.py",
+      "line": 153,
+      "category": "security",
+      "severity": "major",
+      "title": "POST /notifications/read marks any notification as read without checking ownership",
+      "description": "post_notification_read runs `UPDATE notifications SET read_at = ? WHERE id = ?` using only the client-supplied notification_id, with no `user_id = request.user_id` constraint. Any authenticated user can mark any other user's notification (e.g. an over-budget alert or digest) as read by guessing/enumerating small integer ids, causing that notification to disappear from the victim's unread list. The codebase already has a correctly scoped helper, notify.mark_read(db, user_id, notification_id) (ledgerly/notify.py:29-34), which filters by `id = ? AND user_id = ?` and is covered by tests/test_notify.py:14-17 (test_mark_read_scoped_to_user); this new API handler bypasses that helper and reimplements the update without the ownership check.",
+      "reviewer": "generalist"
+    }
+  ],
+  "rejected_findings": [],
+  "raw_finding_count": 3,
+  "merged_count": 3,
+  "stages": [
+    {
+      "stage": "reviewer_generalist",
+      "findings": 3,
+      "seconds": 70.6,
+      "cost_usd": 0.15833979999999998
+    }
+  ],
+  "seconds": 70.6,
+  "cost_usd": 0.1583
+}

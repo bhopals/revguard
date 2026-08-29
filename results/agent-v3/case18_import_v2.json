@@ -1,0 +1,95 @@
+{
+  "case": "case18_import_v2",
+  "system": "agent-v3",
+  "findings": [
+    {
+      "file": "ledgerly/importers.py",
+      "line": 112,
+      "category": "correctness",
+      "title": "Atomic-batch guarantee is not actually atomic: add_expense commits each row individually",
+      "severity": "critical",
+      "description": "import_statement wraps the row loop in `with db.transaction():` (importers.py:107) and its own docstring (lines 100-103) promises 'if any row cannot be imported, no expense from this statement is recorded.' But add_expense (expenses.py:24) inserts via db.execute, and Database.execute (db.py:126-129) itself opens `with self.transaction():` and calls self.conn.commit() immediately after each insert. Because Database.transaction() has no nesting/reference-count guard, every row's insert is committed to the connection the instant add_expense returns, regardless of the outer `with db.transaction():` in import_statement. Concretely: with STATEMENT rows COFFEE CO, GROCER LTD, ... and category_map={'GROCER': 'invalidcat'}, row 1 (COFFEE CO) is added_expense'd and committed to the DB immediately; row 2's category_for('GROCER LTD', ...) then raises ImportError_ (line 84) before add_expense is even called for that row. The exception propagates out of the for-loop and out of `with db.transaction()`, which calls conn.rollback() \u2014 but there is nothing left uncommitted to roll back, since row 1's insert was already committed by the nested db.execute call. The import_batches audit row is never written (its insert is after the loop), yet the COFFEE CO expense is now permanently persisted despite the whole statement having 'failed'. This directly contradicts the PR's core feature and its own docstring, and TestAtomicity/test_mapping_to_unknown_category in tests/test_importers.py does not catch it because the invalid-category row happens to be the very first row parsed, so no prior row is ever committed in that test.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read db.py: Database.execute() (line 126-129) wraps each call in its own `with self.transaction()` which commits self.conn immediately, with no nesting/refcount guard against the outer `with db.transaction()` in import_statement. add_expense (expenses.py:24) calls db.execute for every row insert. Reproduced with a live sqlite3-backed Database: imported a 2-row statement where row 1 (COFFEE CO) is valid and row 2 maps to an invalid category via category_map={'GROCER':'invalidcat'}. import_statement raised ImportError_ as expected, but querying expenses afterward showed 1 row permanently persisted (COFFEE CO, id=1) and import_batches had no row at all \u2014 exactly the half-imported state the docstring claims is impossible. Also confirmed the existing test suite (including TestAtomicity) passes unchanged, since its test happens to put the invalid-category row first, hiding the bug.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "ledgerly/importers.py",
+      "line": 90,
+      "category": "correctness",
+      "title": "Duplicate check dropped description, silently discarding legitimate same-day/same-amount expenses",
+      "severity": "major",
+      "description": "_is_duplicate (importers.py:90-96) now matches on (user_id, spent_on, amount_cents) only, having dropped the `note` column entirely from the WHERE clause. Any two distinct real transactions that share the same date and amount \u2014 e.g. two separate $9.99 purchases on the same day at different merchants, or a coffee and an unrelated $12.50 purchase on the same date \u2014 will cause the second to be treated as a duplicate of the first and silently skipped (imported count under-reports, skipped count over-reports, and the second real expense is never recorded). Because add_expense's inserts are committed immediately (see the atomicity finding), this also applies within a single statement: two data rows in the same import with matching date+amount but different descriptions will have the second one skipped as a 'duplicate' even though it is a genuine separate transaction. This silently drops the discrimination the old code guaranteed (matching on date, amount, AND description) without any corresponding safeguard, and is a real data-loss regression, not merely a performance simplification.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/importers.py: _is_duplicate's SQL query only checks user_id, spent_on, amount_cents (note/desc removed from WHERE clause per diff). Reproduced live: imported a 2-row statement with same date/amount but different descriptions ('Coffee Shop A' vs 'Random Store B'); result was imported=1, skipped=1, and only the first expense was actually persisted in the DB \u2014 the second real transaction was silently dropped. Confirmed add_expense still stores 'note' but it's unused in dedup. Existing test suite (9 tests) passes without catching this since no test covers same-day/same-amount distinct-description rows.",
+        "adjusted_severity": "major"
+      }
+    },
+    {
+      "file": "tests/test_importers.py",
+      "line": 68,
+      "category": "test-adequacy",
+      "title": "TestAtomicity test never exercises a failing/rolled-back import",
+      "severity": "major",
+      "description": "test_atomic_batch (lines 68-74) imports the fully-valid STATEMENT and just re-asserts the normal-success counts and batch row already covered by TestImport.test_import_and_reimport/test_batch_recorded. It never triggers a mid-batch failure (e.g. a row with an unknown-category mapping, or a bad row appended after valid rows), so it cannot detect a regression where the new `with db.transaction():` wrapping is broken or removed and a bad row leaves a half-imported statement \u2014 exactly the bug this PR claims to fix. As written, this test would pass even if atomicity were never implemented.",
+      "reviewer": "tests",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read tests/test_importers.py: TestAtomicity.test_atomic_batch only imports the fully-valid STATEMENT and asserts (3,0) plus imported_count==3 \u2014 identical assertions to TestImport.test_import_and_reimport/test_batch_recorded. No failing/mid-batch-invalid row is ever exercised, and TestCategoryMapping.test_mapping_to_unknown_category (the only test that triggers an ImportError_) never inspects the expenses table afterward. I then executed a reproduction: called import_statement with a 3-row statement where the 3rd row maps to an invalid category, catching the expected ImportError_. Result: 2 expense rows were committed to the DB despite the exception (COFFEE CO and GROCER LTD persisted), i.e. atomicity is actually broken in this PR (add_expense -> db.execute wraps each insert in its own db.transaction() which commits immediately, so the outer `with db.transaction():` in import_statement does not roll back prior inserts). None of the 9 existing tests fail or detect this, confirming the reviewer's claim that the test suite, as written, would pass even if atomicity were never implemented (and in fact currently isn't working).",
+        "adjusted_severity": "major"
+      }
+    },
+    {
+      "file": "tests/test_importers.py",
+      "line": 62,
+      "category": "test-adequacy",
+      "title": "Unknown-category test doesn't verify rollback of already-inserted rows",
+      "severity": "major",
+      "description": "test_mapping_to_unknown_category only asserts that ImportError_ is raised; it never checks that expenses/import_batches remain empty afterward. Additionally, the failing mapping targets 'COFFEE', which matches the very first data row in STATEMENT, so category_for() raises before any add_expense() call has succeeded \u2014 the test can't exercise or catch a rollback failure for rows that were already committed earlier in the same batch (e.g. if GROCER's expense had already been inserted before STREAM's category failed). A broken rollback (e.g. transaction() catching but not re-raising, or add_expense committing per-row) would still pass this test.",
+      "reviewer": "tests",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read tests/test_importers.py: test_mapping_to_unknown_category only asserts pytest.raises(ImportError_), no assertion on expenses/import_batches tables. Confirmed via execution that category_for('COFFEE CO', ...) raises on the very first STATEMENT row, before any add_expense call, so the test can never observe a rollback failure. To prove the gap is real (not just hypothetical), I ran import_statement with category_map={'STREAM': 'yachts'} (a later row) against the actual post-PR code: it raised ImportError_ as expected, but 2 expense rows (COFFEE CO, GROCER LTD) were left committed in the database \u2014 i.e. the 'atomic' transaction is actually NOT atomic in this codebase (add_expense -> db.execute -> db.transaction() commits the sqlite3 connection per row, since sqlite3 has no true nested transactions). Running the existing test suite (pytest tests/test_importers.py) shows all 9 tests pass despite this real atomicity bug, because the shipped test only exercises the COFFEE-matches-first-row case where zero rows are added before the failure regardless of rollback correctness. This directly validates the reviewer's claim.",
+        "adjusted_severity": "major"
+      }
+    }
+  ],
+  "raw_finding_count": 4,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 2,
+      "seconds": 109.4,
+      "cost_usd": 0.18532719999999997
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 0,
+      "seconds": 48.3,
+      "cost_usd": 0.12436180000000001
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 2,
+      "seconds": 30.5,
+      "cost_usd": 0.072309
+    },
+    {
+      "stage": "verifier",
+      "in": 4,
+      "confirmed": 4,
+      "seconds": 47.6
+    }
+  ],
+  "seconds": 157.0,
+  "cost_usd": 0.752
+}

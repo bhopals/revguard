@@ -7,13 +7,13 @@
 validate:
 	python3 tools/validate_cases.py
 
-# Run the single-prompt baseline over all 12 cases (cached; --force to redo).
+# Run the single-prompt baseline over all 22 cases (cached; --force to redo).
 baseline:
 	python3 baseline/run.py
 
-# Run the final agent pipeline (v3) over all 12 cases.
+# Run the final agent pipeline (v5) over all 22 cases.
 agent:
-	python3 agent/run.py --config v3
+	python3 agent/run.py --config v5
 
 # Score every system present under results/ and print the comparison table.
 eval:

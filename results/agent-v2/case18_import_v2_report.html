@@ -1,0 +1,65 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Importer v2: category mapping and atomic batches</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Importer v2: category mapping and atomic batches</h1>
+<div class="sub">Statement import learns two things users kept asking for: map merchant descriptions to categories (case-insensitive prefix rules, e.g. &#x27;COFFEE&#x27; -&gt; food), and all-or-nothing batches so a bad row no longer leaves a half-imported statement. Duplicate detection was also simplified and sped up by keying on (date, amount).</div>
+<span class="verdict" style="background:#c62828">Request changes — 4 confirmed finding(s), 1 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. Atomic-batch guarantee is broken: add_expense commits each row individually</strong>
+  <div class="loc">ledgerly/importers.py:107 &middot; correctness</div>
+  <div>import_statement wraps the loop in `with db.transaction():` to make the batch all-or-nothing, but each row is inserted via add_expense (ledgerly/expenses.py:24), which itself calls db.execute -&gt; `with self.transaction(): ... self.conn.commit()` (ledgerly/db.py:126-129, 109-116). sqlite3&#x27;s Python transaction model has no real nesting/savepoints here, so that inner commit() commits the connection&#x27;s entire pending transaction, including any earlier rows added in the same outer `with db.transaction():` block. Concretely: import a 3-row statement where row 3 triggers a failure after rows 1-2 succeeded (e.g. category_for raises ImportError_ for row 3&#x27;s mapped category, or add_expense raises ExpenseError for a too-long note on row 3). Rows 1 and 2 are already durably committed by the time row 3&#x27;s exception propagates to the outer `with db.transaction()` handler, which then rolls back a connection that has nothing left to undo. The statement ends up half-imported and no import_batches row is written for it, directly contradicting the PR&#x27;s stated guarantee (&#x27;a bad row no longer leaves a half-imported statement&#x27;) and the function&#x27;s own docstring (&#x27;The whole batch succeeds or fails together&#x27;). The existing tests never hit this because the only failure-path test (test_mapping_to_unknown_category) fails on the very first row (COFFEE CO), so there are no prior successful inserts to observe as leaked.</div>
+  
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>2. Duplicate key dropped description, causing false positives within/across a single statement</strong>
+  <div class="loc">ledgerly/importers.py:90 &middot; correctness</div>
+  <div>_is_duplicate now matches solely on (user_id, spent_on, amount_cents), no longer on note/description. Two distinct real transactions on the same date for the same amount but different merchants (e.g. a $12.50 coffee and a $12.50 taxi fare on the same day) will now cause the second to be silently skipped as a &#x27;duplicate&#x27;, including within a single import batch: add_expense&#x27;s insert (via db.execute) is committed to the same connection before the next row&#x27;s _is_duplicate check runs, so an earlier legitimate row in the same statement can shadow a later legitimate row. The previous code (keyed on date+amount+note) did not have this false-positive risk. This silently drops real spend data with no error surfaced to the caller (it just increments skipped_duplicates).</div>
+  
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>3. category_for is not actually case-insensitive on the mapping keys, contradicting its own docstring</strong>
+  <div class="loc">ledgerly/importers.py:82 &middot; correctness</div>
+  <div>category_for&#x27;s docstring promises &#x27;case-insensitive prefix rules&#x27;, but the implementation only uppercases the description (`desc.upper()`) and compares it against `prefix` as-supplied. If a caller supplies a category_map with a lower- or mixed-case prefix (e.g. {&quot;coffee&quot;: &quot;food&quot;}), `desc.upper().startswith(prefix)` compares an all-uppercase string against a lowercase prefix and never matches, so every matching description silently falls back to DEFAULT_CATEGORY instead of being mapped. This only appears to work in the tests/docstring example because both use all-uppercase prefixes (&quot;COFFEE&quot;, &quot;STREAM&quot;); any caller relying on the stated case-insensitive contract with non-uppercase prefixes gets silently wrong categorization with no error raised.</div>
+  
+</div>
+<div class="card">
+  <span class="sev" style="background:#607d8b">?</span>
+  <strong>4. TestAtomicity never exercises a failing batch, so rollback logic is unverified</strong>
+  <div class="loc">tests/test_importers.py:68 &middot; test-adequacy</div>
+  <div>test_atomic_batch (tests/test_importers.py:69-74) just re-runs the plain happy-path import already covered by TestImport.test_import_and_reimport — it imports a clean statement and checks imported/skipped counts and the batch row, with no failure injected. The PR&#x27;s core new claim is that &#x27;a malformed row no longer leaves a half-imported statement behind&#x27; via db.transaction() wrapping the loop (ledgerly/importers.py:107-119), but no test ever causes a row after a successful add_expense to fail (e.g. a later description mapping to an invalid category, or a duplicate-check hitting an error) and then asserts that the expenses table and import_batches table contain zero rows for that statement. If the rollback wiring were broken (e.g. db.conn.execute at line 115 bypassing the transaction, or an exception swallowed before propagating), this test suite would not catch it — the only failure test (test_mapping_to_unknown_category) fails on the very first row of STATEMENT, so it can&#x27;t distinguish &#x27;nothing was ever inserted&#x27; from &#x27;inserted rows were rolled back&#x27;.</div>
+  
+</div>
+<footer>Pipeline: reviewer_correctness (3) &rarr; reviewer_security (0) &rarr; reviewer_tests (2) &middot; 87.1s &middot;
+$0.40 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>
