@@ -34,11 +34,16 @@ If the diff has no defects, return {{"findings": []}}.
 
 
 def review_case(case_dir, out_dir, traj_dir):
+    import os
+    quiet = bool(os.environ.get("REVGUARD_QUIET"))
     meta = load_meta(case_dir)
     diff = make_diff(case_dir)
     prompt = PROMPT_TEMPLATE.format(
         title=meta["title"], description=meta["pr_description"], diff=diff,
     )
+    if not quiet:
+        print(f"  BASELINE — one prompt, diff pasted inline, NO tools, NO "
+              f"verifier. Reviewing '{meta['title']}'…", flush=True)
     with tempfile.TemporaryDirectory() as empty:
         res = run_agent(
             prompt,
@@ -47,6 +52,10 @@ def review_case(case_dir, out_dir, traj_dir):
             trajectory_path=Path(traj_dir) / f"{meta['id']}.jsonl",
         )
     findings = extract_json(res["text"]).get("findings", [])
+    if not quiet:
+        for f in findings:
+            print(f"      · {f.get('file')}:{f.get('line')} "
+                  f"[{f.get('severity')}] {str(f.get('title',''))[:56]}", flush=True)
     out = {
         "case": meta["id"],
         "system": "baseline",

@@ -17,7 +17,8 @@ import json
 import shutil
 import sys
 import tempfile
-from concurrent.futures import ThreadPoolExecutor
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -25,6 +26,20 @@ sys.path.insert(0, str(ROOT))
 from agent.runtime import AgentError, extract_json, run_agent  # noqa: E402
 from agent.prompts.specialists import SPECIALISTS, SPECIALISTS_V2  # noqa: E402
 from tools.case_utils import build_workdir, list_cases, load_meta, make_diff  # noqa: E402
+
+# Live progress log. On by default so a run shows the pipeline working in real
+# time (set REVGUARD_QUIET=1 to silence). Timestamped, flushed immediately.
+QUIET = bool(__import__("os").environ.get("REVGUARD_QUIET"))
+_T0 = [None]
+
+
+def log(msg):
+    if QUIET:
+        return
+    if _T0[0] is None:
+        _T0[0] = time.time()
+    dt = time.time() - _T0[0]
+    print(f"  [{dt:5.1f}s] {msg}", flush=True)
 
 PROMPTS = ROOT / "agent" / "prompts"
 
@@ -166,6 +181,9 @@ def review_diff(config_name, title, description, diff, files, workdir,
     stage_meta = []
 
     # Stage 1: reviewers in parallel.
+    revs = cfg["specialists"]
+    log(f"STAGE 1 — launching {len(revs)} specialist reviewer(s) in parallel: "
+        + ", ".join(revs))
     all_findings = []
     with ThreadPoolExecutor(max_workers=4) as pool:
         futs = {
@@ -173,16 +191,21 @@ def review_diff(config_name, title, description, diff, files, workdir,
                         description, diff, files, workdir, traj_dir,
                         cfg.get("specialist_set", "v1"),
                         cfg.get("reviewer_model")): name
-            for name in cfg["specialists"]
+            for name in revs
         }
-        for fut in futs:
+        for fut in as_completed(futs):
             name = futs[fut]
             try:
                 findings, res = fut.result()
             except AgentError as e:
-                print(f"  [{title}] reviewer {name} FAILED: {e}")
+                log(f"  ✗ reviewer '{name}' FAILED: {e}")
                 stage_meta.append({"stage": f"reviewer_{name}", "error": str(e)})
                 continue
+            log(f"  ✓ reviewer '{name}' returned {len(findings)} finding(s) "
+                f"({res['seconds']}s, ${res['cost_usd'] or 0:.2f})")
+            for fdg in findings:
+                log(f"      · {fdg.get('file')}:{fdg.get('line')} "
+                    f"[{fdg.get('severity')}] {str(fdg.get('title',''))[:56]}")
             all_findings += findings
             total_cost += res["cost_usd"] or 0
             total_seconds = max(total_seconds, res["seconds"])  # parallel
@@ -192,10 +215,13 @@ def review_diff(config_name, title, description, diff, files, workdir,
                                "cost_usd": res["cost_usd"]})
 
     merged = dedupe(all_findings)
+    log(f"MERGE — {len(all_findings)} raw finding(s) → {len(merged)} after dedupe")
 
     # Stage 2: adversarial verification (parallel, fresh sandbox each).
     rejected = []
     if cfg["verify"] and merged:
+        log(f"STAGE 2 — adversarial verifier attacking {len(merged)} finding(s) "
+            "(fresh sandbox + shell each; 'prove it wrong')")
         verify_seconds = 0.0
         confirmed = []
         with ThreadPoolExecutor(max_workers=4) as pool:
@@ -206,13 +232,12 @@ def review_diff(config_name, title, description, diff, files, workdir,
                             traj_dir, i, verifier_prompt): (i, f)
                 for i, f in enumerate(merged)
             }
-            for fut in futs:
+            for fut in as_completed(futs):
                 i, f = futs[fut]
                 try:
                     verdict, res = fut.result()
                 except AgentError as e:
-                    print(f"  [{title}] verifier {i} FAILED ({e});"
-                          " keeping finding unverified")
+                    log(f"  ! verifier #{i} FAILED ({e}); keeping unverified")
                     f["verification"] = {"verdict": "UNVERIFIED",
                                          "evidence": str(e)}
                     confirmed.append(f)
@@ -220,7 +245,11 @@ def review_diff(config_name, title, description, diff, files, workdir,
                 total_cost += res["cost_usd"] or 0
                 verify_seconds = max(verify_seconds, res["seconds"])
                 f["verification"] = verdict
-                if verdict.get("verdict") == "CONFIRMED":
+                v = verdict.get("verdict")
+                mark = "✓ CONFIRMED" if v == "CONFIRMED" else "✗ REJECTED"
+                log(f"  {mark}: {f.get('file')}:{f.get('line')} "
+                    f"[{f.get('severity')}] {str(f.get('title',''))[:46]}")
+                if v == "CONFIRMED":
                     if verdict.get("adjusted_severity"):
                         f["severity"] = verdict["adjusted_severity"]
                     confirmed.append(f)
@@ -230,6 +259,8 @@ def review_diff(config_name, title, description, diff, files, workdir,
         stage_meta.append({"stage": "verifier",
                            "in": len(merged), "confirmed": len(confirmed),
                            "seconds": verify_seconds})
+        log(f"VERIFIER — {len(confirmed)}/{len(merged)} finding(s) survived "
+            f"({len(rejected)} rejected as false/advisory)")
         final = confirmed
     else:
         final = merged
@@ -252,6 +283,9 @@ def review_case(case_dir, config_name, out_root, traj_root, work_root):
     files = changed_files(case_dir)
     workdir = build_workdir(case_dir, Path(work_root) / meta["id"])
 
+    _T0[0] = time.time()
+    log(f"REVIEWING '{meta['title']}'  [{config_name}]  "
+        f"{len(files)} file(s), {len(diff.splitlines())} diff lines")
     result = review_diff(
         config_name, meta["title"], meta["pr_description"], diff, files,
         workdir, lambda dest: build_workdir(case_dir, dest),

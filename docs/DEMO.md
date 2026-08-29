@@ -42,15 +42,18 @@ This is the best single demo. Case 21 is a "performance refactor" PR that
 looks innocent and whose tests pass, but it hides three cross-module bugs.
 
 ```bash
-python3 agent/run.py --config v5 --case case21_perf_reports --run-name demo
+python3 agent/run.py --config v5 --case case21_perf_reports --run-name live --force
 ```
 
 `--case` accepts the bare name (or a unique prefix like `case21`, or the full
-`cases/case21_perf_reports` path). `--run-name demo` writes the output to
-`results/demo/` so it (a) always runs fresh instead of printing
-`cached, skipping`, and (b) never overwrites the committed canonical result in
-`results/agent-v5/` that the dashboard cites. (If you don't need to preserve
-that, `--force` re-runs in place instead.)
+`cases/case21_perf_reports` path). The run now prints **live progress** — you
+watch the three reviewers launch, return findings, then the verifier confirm
+each one with timestamps. `--run-name live` writes to `results/live/` so it
+never overwrites the committed canonical result in `results/agent-v5/` that the
+dashboard cites; `--force` makes it re-run instead of printing `cached,
+skipping`. (For a scripted, word-for-word demo walkthrough see
+[DEMO_SCRIPT.md](DEMO_SCRIPT.md); a stable pre-baked copy of this review lives
+in `results/demo/` for showing without waiting.)
 
 What happens, in order (you'll see it in the console and in `trajectories/`):
 
@@ -203,7 +206,7 @@ Details in [../replay/README.md](../replay/README.md).
 |---|---|
 | Prove benchmark is honest (no API) | `make validate` |
 | Harness self-tests (no API) | `make test` |
-| Review one hard PR with the pipeline | `python3 agent/run.py --config v5 --case case21_perf_reports --run-name demo` |
+| Review one hard PR with the pipeline (live) | `python3 agent/run.py --config v5 --case case21_perf_reports --run-name live --force` |
 | Same PR through the baseline | `python3 baseline/run.py --case case21_perf_reports --out results/demo-baseline` |
 | Score any results dirs | `python3 eval/compare.py results/baseline results/agent-v5` |
 | Rebuild the dashboard | `python3 eval/dashboard.py` |

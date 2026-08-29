@@ -6,14 +6,14 @@
       "file": "ledgerly/reports.py",
       "line": 44,
       "category": "correctness",
-      "title": "budget_status no longer filters expenses by month, summing all-time spend",
       "severity": "critical",
-      "description": "The old code computed spend via monthly_summary(), which filters expenses with `WHERE user_id = ? AND substr(spent_on, 1, 7) = ?` (line 27), i.e. only expenses within the requested month. The new single-query JOIN (lines 40-49) joins budgets to expenses only on `e.user_id = b.user_id AND e.category = b.category` with no constraint on `e.spent_on`/month at all. As a result, `spent` (and therefore `remaining` and `over_budget`) now aggregates the user's entire historical spend in that category across all months, not just the requested month. Example: a user has a '2025-01' budget for 'groceries' with $50 limit, spent $10 in January and $60 in February (different month, same category). budget_status(db, user_id, '2025-01') will report spent=$70 and over_budget=True, even though January spend was only $10 and under budget. This directly contradicts the function's docstring (\"Compare spend against each budget set for the month\") and the PR's claim of 'No behavior change intended'.",
+      "title": "budget_status sums all-time expenses instead of the requested month",
+      "description": "The new LEFT JOIN in budget_status joins expenses to budgets on user_id and category only (lines 44-45), with no filter on expenses.spent_on. The old implementation computed spend via monthly_summary(), which filtered with `substr(spent_on, 1, 7) = ?` (reports.py:27) to restrict totals to the requested month. Now, for a budget on category 'food' for month '2026-03', the query sums every expense ever recorded in that category for that user, across all months, not just March. For example, a user with $50 spent in food in January and a $30 budget set for March with no March expenses would now show spent=$50 and over_budget=True for March, even though March spend is $0. This directly contradicts the function's docstring ('Compare spend against each budget set for the month') and the PR's explicit claim of 'No behavior change intended'. The bug is not caught by tests because every existing budget_status test only adds expenses within the same month being queried (tests/test_ledgerly.py:96-107).",
       "reviewer": "correctness",
       "verification": {
         "verdict": "CONFIRMED",
         "confidence": "high",
-        "evidence": "Read ledgerly/reports.py lines 40-49: the LEFT JOIN condition is `e.user_id = b.user_id AND e.category = b.category` with no constraint tying e.spent_on to b.month. Reproduced with a live Database instance: inserted a $10 January groceries expense and a $60 February groceries expense, set a $50 January budget, and called budget_status(db, 1, '2025-01'). Output: {'category': 'groceries', 'limit': '$50.00', 'spent': '$70.00', 'remaining': '-$20.00', 'over_budget': True} \u2014 confirming spend aggregates across all months instead of just the requested month, exactly as the finding describes. This is a genuine runtime correctness regression (not a missing-test complaint), directly contradicting the docstring and the PR's 'no behavior change' claim.",
+        "evidence": "Read ledgerly/reports.py:40-49: the new LEFT JOIN in budget_status joins expenses to budgets on user_id and category only, with no spent_on/month filter on the expenses side (only budgets.month is filtered in WHERE). Reproduced with a live script: created a user, added a $50 'food' expense dated 2026-01-15, set a $30 'food' budget for month 2026-03, then called budget_status(db, user, '2026-03'). Output: {'category': 'food', 'limit': '$30.00', 'spent': '$50.00', 'remaining': '-$20.00', 'over_budget': True} \u2014 despite zero March expenses, confirming the query sums all-time spend for the category rather than just the requested month. Ran the existing budget tests (pytest -k budget) and they pass, confirming the bug is real and not caught by current tests since those tests only add expenses within the queried month. This directly contradicts the docstring 'Compare spend against each budget set for the month' and the PR's stated 'no behavior change intended'.",
         "adjusted_severity": "critical"
       }
     },
@@ -21,62 +21,47 @@
       "file": "ledgerly/db.py",
       "line": 100,
       "category": "robustness",
-      "title": "CREATE INDEX without IF NOT EXISTS crashes on reopening an existing database file",
-      "severity": "major",
-      "description": "SCHEMA is executed via `self.conn.executescript(SCHEMA)` every time a Database object is constructed (db.py:111), and all table statements use `CREATE TABLE IF NOT EXISTS` so they are idempotent. The newly added `CREATE INDEX idx_expenses_user_category ON expenses (user_id, category, spent_on);` (lines 100-101) omits `IF NOT EXISTS`. For any non-`:memory:` database path, opening a second `Database(path)` against the same file (e.g. app restart, a second process, or any test/code that constructs Database twice against the same file) raises `sqlite3.OperationalError: index idx_expenses_user_category already exists`, since the CREATE TABLE statements succeed silently (already exist) but the index statement does not. This is a regression introduced by this PR: schema initialization was previously always safe to re-run, and now crashes on reopen.",
+      "severity": "critical",
+      "title": "New CREATE INDEX lacks IF NOT EXISTS, crashing on reopen of a persistent database",
+      "description": "SCHEMA is executed via executescript() every time a Database is constructed (db.py:111), and every CREATE TABLE statement uses 'IF NOT EXISTS' to make this idempotent for existing database files. The newly added 'CREATE INDEX idx_expenses_user_category ON expenses (...)' statement omits 'IF NOT EXISTS'. For any file-backed database (Database(path) with a real path, the normal production use case since the constructor accepts an arbitrary path), the first run creates the index successfully, but any subsequent process start against the same database file raises sqlite3.OperationalError: index idx_expenses_user_category already exists, since executescript() runs unconditionally on init. This is a crash-on-reopen regression introduced by this PR; it is masked in the test suite because tests only use the in-memory default (':memory:'), which never persists the index across Database() instantiations.",
       "reviewer": "correctness",
       "verification": {
         "verdict": "CONFIRMED",
         "confidence": "high",
-        "evidence": "Read ledgerly/db.py:100-111, confirming the new CREATE INDEX statement lacks IF NOT EXISTS while all CREATE TABLE statements have it. Reproduced by executing: Database('test_ledgerly.db') twice against the same file path \u2014 first open succeeds, second raises sqlite3.OperationalError: index idx_expenses_user_category already exists, exactly as described. Database.__init__ signature (path=':memory:') confirms file-backed usage is a supported, intended code path, not a hypothetical. Existing tests only use in-memory Database() so they don't catch this, but that's incidental to the defect being real and reachable in normal use (app restart / second process opening the same DB file).",
-        "adjusted_severity": "major"
-      }
-    },
-    {
-      "file": "ledgerly/db.py",
-      "line": 110,
-      "category": "robustness",
-      "title": "PRAGMA synchronous = OFF silently drops crash-durability guarantees",
-      "severity": "major",
-      "description": "The PR adds `self.conn.execute(\"PRAGMA synchronous = OFF\")` for every Database connection. With synchronous=OFF, SQLite does not fsync after writing to the WAL/rollback journal before continuing, so a power loss or OS crash during or shortly after a commit (e.g. inside `execute()`/`transaction()` at db.py:113-120, used for all budget/expense writes) can corrupt the database file or silently lose committed transactions. The PR description says 'No behavior change intended,' but this removes a durability guarantee the old code provided (default synchronous=FULL/NORMAL), trading correctness-under-crash for write speed without any mention of this tradeoff or exception handling for the corrupted-db case.",
-      "reviewer": "correctness",
-      "verification": {
-        "verdict": "CONFIRMED",
-        "confidence": "high",
-        "evidence": "Read db.py:107-111 confirming the diff: `PRAGMA synchronous = OFF` is newly added to Database.__init__, applied to every connection. Ran the actual code against a real on-disk file: `PRAGMA synchronous` returns 0 (OFF) and `PRAGMA journal_mode` returns 'delete' (default rollback-journal mode, not WAL) \u2014 this is exactly the SQLite-documented dangerous combination where the docs state the database file 'could be corrupted' after an OS crash or power loss, since no fsync occurs after writing the rollback journal before committing. Confirmed via grep that db.execute()/transaction() (the code path with this pragma applied) is used across expenses.py, recurring.py, household.py, importers.py, auth.py, notify.py \u2014 i.e., all real writes in the app go through this weakened-durability connection. The change is unrelated to the PR's stated read-performance goal (single-query budget status / new index) and is undisclosed as a durability tradeoff, contradicting the 'no behavior change intended' framing. This is an actual code behavior defect, not a test-coverage nitpick, so it passes the policy gate.",
-        "adjusted_severity": "major"
+        "evidence": "Read ledgerly/db.py: SCHEMA (lines 9-102) has all CREATE TABLE statements using 'IF NOT EXISTS' but the new CREATE INDEX at line 100-101 omits it, and __init__ (line 111) runs executescript(SCHEMA) unconditionally on every Database() construction. Reproduced with a real script: created a file-backed Database('/tmp/test_ledgerly.db'), closed it, then reopened Database() against the same path -> raised sqlite3.OperationalError: index idx_expenses_user_category already exists, exactly as described. Confirmed via grep that tests/conftest.py and tests/test_ledgerly.py both instantiate Database() with no path argument (defaulting to ':memory:'), so the test suite never exercises reopening a persistent file and does not catch this regression.",
+        "adjusted_severity": "critical"
       }
     }
   ],
   "rejected_findings": [],
-  "raw_finding_count": 3,
-  "merged_count": 3,
+  "raw_finding_count": 2,
+  "merged_count": 2,
   "stages": [
     {
       "stage": "reviewer_correctness",
-      "findings": 3,
-      "seconds": 29.9,
-      "cost_usd": 0.06532579999999999
+      "findings": 2,
+      "seconds": 47.4,
+      "cost_usd": 0.1029046
     },
     {
       "stage": "reviewer_security",
       "findings": 0,
-      "seconds": 28.4,
-      "cost_usd": 0.0615106
+      "seconds": 55.3,
+      "cost_usd": 0.1250042
     },
     {
       "stage": "reviewer_tests",
       "findings": 0,
-      "seconds": 40.0,
-      "cost_usd": 0.09006739999999999
+      "seconds": 47.7,
+      "cost_usd": 0.086194
     },
     {
       "stage": "verifier",
-      "in": 3,
-      "confirmed": 3,
-      "seconds": 39.7
+      "in": 2,
+      "confirmed": 2,
+      "seconds": 37.0
     }
   ],
-  "seconds": 79.7,
-  "cost_usd": 0.45
+  "seconds": 92.3,
+  "cost_usd": 0.4427
 }

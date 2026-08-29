@@ -5,7 +5,7 @@
 **Tool call → Read**
 
 ```json
-{"file_path": "/private/var/folders/16/68bllkdn5n75d9gn5qj1thtw0000gp/T/revguard-work-demo/case21_perf_reports/ledgerly/reports.py"}
+{"file_path": "/private/var/folders/16/68bllkdn5n75d9gn5qj1thtw0000gp/T/revguard-work-agent-v5/case21_perf_reports/ledgerly/reports.py"}
 ```
 
 **Tool result:**
@@ -43,7 +43,7 @@
 **Tool call → Read**
 
 ```json
-{"file_path": "/private/var/folders/16/68bllkdn5n75d9gn5qj1thtw0000gp/T/revguard-work-demo/case21_perf_reports/ledgerly/db.py"}
+{"file_path": "/private/var/folders/16/68bllkdn5n75d9gn5qj1thtw0000gp/T/revguard-work-agent-v5/case21_perf_reports/ledgerly/db.py"}
 ```
 
 **Tool result:**
@@ -81,30 +81,184 @@
 … [3428 chars truncated]
 ```
 
-**Tool call → Glob**
+**Tool call → Grep**
 
 ```json
-{"pattern": "**/test*.py"}
+{"pattern": "Database\\(", "output_mode": "content", "-n": true}
 ```
 
 **Tool result:**
 
 ```
-tests/test_ledgerly.py
-tests/test_household.py
-tests/test_recurring.py
-tests/test_importers.py
-tests/test_notify.py
-tests/test_api.py
+tests/test_ledgerly.py:10:    d = Database()
+tests/conftest.py:9:    d = Database()
+```
+
+**Tool call → Read**
+
+```json
+{"file_path": "/private/var/folders/16/68bllkdn5n75d9gn5qj1thtw0000gp/T/revguard-work-agent-v5/case21_perf_reports/tests/test_ledgerly.py", "limit": 40}
+```
+
+**Tool result:**
+
+```
+1	import pytest
+2	
+3	from ledgerly.db import Database
+4	from ledgerly import auth, expenses, reports
+5	from ledgerly.utils import parse_money, format_money, month_of, parse_iso_date
+6	
+7	
+8	@pytest.fixture()
+9	def db():
+10	    d = Database()
+11	    yield d
+12	    d.close()
+13	
+14	
+15	@pytest.fixture()
+16	def user(db):
+17	    return auth.register(db, "alice", "s3cretpass")
+18	
+19	
+20	class TestUtils:
+21	    def test_parse_money(self):
+22	        assert parse_money("12.50") == 1250
+23	        assert parse_money("$12.50") == 1250
+24	        assert parse_money("12") == 1200
+25	        assert parse_money("0.5") == 50
+26	
+27	    def test_parse_money_rejects_garbage(self):
+28	        for bad in ["", "abc", "-5", "12.345", "1,000"]:
+29	            with pytest.raises(ValueError):
+30	               
+… [316 chars truncated]
 ```
 
 **Assistant:**
 
-{"findings": [{"file": "ledgerly/reports.py", "line": 44, "category": "correctness", "title": "budget_status no longer filters expenses by month, summing all-time spend", "severity": "critical", "description": "The old code computed spend via monthly_summary(), which filters expenses with `WHERE user_id = ? AND substr(spent_on, 1, 7) = ?` (line 27), i.e. only expenses within the requested month. The new single-query JOIN (lines 40-49) joins budgets to expenses only on `e.user_id = b.user_id AND e.category = b.category` with no constraint on `e.spent_on`/month at all. As a result, `spent` (and therefore `remaining` and `over_budget`) now aggregates the user's entire historical spend in that category across all months, not just the requested month. Example: a user has a '2025-01' budget for 'groceries' with $50 limit, spent $10 in January and $60 in February (different month, same category). budget_status(db, user_id, '2025-01') will report spent=$70 and over_budget=True, even though January spend was only $10 and under budget. This directly contradicts the function's docstring (\"Compare spend against each budget set for the month\") and the PR's claim of 'No behavior change intende
-… [1958 chars truncated]
+Confirmed both defects. Here are the findings.
+
+**Tool call → Grep**
+
+```json
+{"pattern": "budget_status", "path": "/private/var/folders/16/68bllkdn5n75d9gn5qj1thtw0000gp/T/revguard-work-agent-v5/case21_perf_reports/tests/test_ledgerly.py", "output_mode": "content", "-n": true}
+```
+
+**Tool result:**
+
+```
+96:    def test_budget_status(self, db, user):
+99:        status = reports.budget_status(db, user, "2026-03")
+106:        status = reports.budget_status(db, user, "2026-03")
+```
+
+**Tool call → Read**
+
+```json
+{"file_path": "/private/var/folders/16/68bllkdn5n75d9gn5qj1thtw0000gp/T/revguard-work-agent-v5/case21_perf_reports/tests/test_ledgerly.py", "offset": 85, "limit": 30}
+```
+
+**Tool result:**
+
+```
+85	        rows = expenses.list_expenses(db, user, category="food")
+86	        assert [r["amount_cents"] for r in rows] == [100]
+87	
+88	
+89	class TestReports:
+90	    def test_monthly_summary(self, db, user):
+91	        expenses.add_expense(db, user, 100, "food", "2026-03-01")
+92	        expenses.add_expense(db, user, 250, "food", "2026-03-15")
+93	        expenses.add_expense(db, user, 400, "transport", "2026-04-01")
+94	        assert reports.monthly_summary(db, user, "2026-03") == {"food": 350}
+95	
+96	    def test_budget_status(self, db, user):
+97	        reports.set_budget(db, user, "food", "2026-03", 300)
+98	        expenses.add_expense(db, user, 350, "food", "2026-03-10")
+99	        status = reports.budget_status(db, user, "2026-03")
+100	        assert status[0]["over_budget"] is True
+1
+… [353 chars truncated]
+```
+
+**Assistant:**
+
+This confirms the existing tests only add expenses within the queried month, so they don't catch the missing month filter — the regression slips through CI.
+
+**Tool call → Read**
+
+```json
+{"file_path": "/private/var/folders/16/68bllkdn5n75d9gn5qj1thtw0000gp/T/revguard-work-agent-v5/case21_perf_reports/tests/conftest.py"}
+```
+
+**Tool result:**
+
+```
+1	import pytest
+2	
+3	from ledgerly.db import Database
+4	from ledgerly import auth
+5	
+6	
+7	@pytest.fixture()
+8	def db():
+9	    d = Database()
+10	    yield d
+11	    d.close()
+12	
+13	
+14	@pytest.fixture()
+15	def user(db):
+16	    return auth.register(db, "alice", "s3cretpass")
+17	
+18	
+19	@pytest.fixture()
+20	def bob(db):
+21	    return auth.register(db, "bob", "bobspassword")
+22	
+23	
+24	@pytest.fixture()
+25	def carol(db):
+26	    return auth.register(db, "carol", "carolspassword")
+27	
+```
+
+**Assistant:**
+
+Now compiling the findings.
+
+**Tool call → Read**
+
+```json
+{"file_path": "/private/var/folders/16/68bllkdn5n75d9gn5qj1thtw0000gp/T/revguard-work-agent-v5/case21_perf_reports/ledgerly/reports.py", "offset": 40, "limit": 10}
+```
+
+**Tool result:**
+
+```
+40	    rows = db.query(
+41	        "SELECT b.category, b.limit_cents,"
+42	        " COALESCE(SUM(e.amount_cents), 0) AS spent"
+43	        " FROM budgets b"
+44	        " LEFT JOIN expenses e ON e.user_id = b.user_id"
+45	        "   AND e.category = b.category"
+46	        " WHERE b.user_id = ? AND b.month = ?"
+47	        " GROUP BY b.category, b.limit_cents",
+48	        (user_id, month),
+49	    )
+```
+
+**Assistant:**
+
+```json
+{"findings": [{"file": "ledgerly/reports.py", "line": 44, "category": "correctness", "severity": "critical", "title": "budget_status sums all-time expenses instead of the requested month", "description": "The new LEFT JOIN in budget_status joins expenses to budgets on user_id and category only (lines 44-45), with no filter on expenses.spent_on. The old implementation computed spend via monthly_summary(), which filtered with `substr(spent_on, 1, 7) = ?` (reports.py:27) to restrict totals to the requested month. Now, for a budget on category 'food' for month '2026-03', the query sums every expense ever recorded in that category for that user, across all months, not just March. For example, a user with $50 spent in food in January and a $30 budget set for March with no March expenses would now show spent=$50 and over_budget=True for March, even though March spend is $0. This directly contradicts the function's docstring ('Compare spend against each budget set for the month') and the PR's explicit claim of 'No behavior change intended'. The bug is not caught by tests because every existing budget_status test only adds expenses within the same month being queried (tests/test_led
+… [1136 chars truncated]
 
 ---
-**Final result** (4 turns, 27.9s, $0.065):
+**Final result** (9 turns, 41.6s, $0.103):
 
-{"findings": [{"file": "ledgerly/reports.py", "line": 44, "category": "correctness", "title": "budget_status no longer filters expenses by month, summing all-time spend", "severity": "critical", "description": "The old code computed spend via monthly_summary(), which filters expenses with `WHERE user_id = ? AND substr(spent_on, 1, 7) = ?` (line 27), i.e. only expenses within the requested month. The new single-query JOIN (lines 40-49) joins budgets to expenses only on `e.user_id = b.user_id AND e.category = b.category` with no constraint on `e.spent_on`/month at all. As a result, `spent` (and therefore `remaining` and `over_budget`) now aggregates the user's entire historical spend in that category across all months, not just the requested month. Example: a user has a '2025-01' budget for 'groceries' with $50 limit, spent $10 in January and $60 in February (different month, same category). budget_status(db, user_id, '2025-01') will report spent=$70 and over_budget=True, even though January spend was only $10 and under budget. This directly contradicts the function's docstring (\"Compare spend against each budget set for the month\") and the PR's claim of 'No behavior change intende
-… [1958 chars truncated]
+```json
+{"findings": [{"file": "ledgerly/reports.py", "line": 44, "category": "correctness", "severity": "critical", "title": "budget_status sums all-time expenses instead of the requested month", "description": "The new LEFT JOIN in budget_status joins expenses to budgets on user_id and category only (lines 44-45), with no filter on expenses.spent_on. The old implementation computed spend via monthly_summary(), which filtered with `substr(spent_on, 1, 7) = ?` (reports.py:27) to restrict totals to the requested month. Now, for a budget on category 'food' for month '2026-03', the query sums every expense ever recorded in that category for that user, across all months, not just March. For example, a user with $50 spent in food in January and a $30 budget set for March with no March expenses would now show spent=$50 and over_budget=True for March, even though March spend is $0. This directly contradicts the function's docstring ('Compare spend against each budget set for the month') and the PR's explicit claim of 'No behavior change intended'. The bug is not caught by tests because every existing budget_status test only adds expenses within the same month being queried (tests/test_led
+… [1136 chars truncated]

@@ -6,3 +6,5 @@ __pycache__/
 # Replay results are regenerated; keep only inputs under version control.
 replay/results/
 reviews/*/trajectories/
+results/live/
+trajectories/live/

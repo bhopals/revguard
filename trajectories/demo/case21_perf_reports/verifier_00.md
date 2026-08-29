@@ -2,23 +2,10 @@
 
 **Session init** — model `claude-sonnet-5`, tools: Bash, Glob, Grep, Read
 
-**Tool call → Bash**
-
-```json
-{"command": "find . -name reports.py -o -name db.py | xargs -I{} echo {}"}
-```
-
-**Tool result:**
-
-```
-./ledgerly/db.py
-./ledgerly/reports.py
-```
-
 **Tool call → Read**
 
 ```json
-{"file_path": "/private/var/folders/16/68bllkdn5n75d9gn5qj1thtw0000gp/T/tmp8p973wv8/repo/ledgerly/reports.py"}
+{"file_path": "/private/var/folders/16/68bllkdn5n75d9gn5qj1thtw0000gp/T/tmprthrk_pc/repo/ledgerly/reports.py"}
 ```
 
 **Tool result:**
@@ -55,13 +42,12 @@
 
 **Assistant:**
 
-Confirmed the JOIN has no month filter on expenses. Let me execute a reproduction to be certain.
+Confirmed by reading the code — the JOIN indeed has no `spent_on` filter. Let me execute a reproduction to be certain.
 
 **Tool call → Bash**
 
 ```json
-{"command": "python3 -c \"\nfrom ledgerly.db import DB\nfrom ledgerly.reports import set_budget, budget_status\n\ndb = DB(':memory:')\ndb.conn.execute(\\\"INSERT INTO expenses (user_id, category, amount_cents, spent_on, description, created_at) VALUES (1, 'groceries', 1000, '2025-01-15', '', '2025-01-15')\\\")\ndb.conn.execute(\\\"INSERT INTO expenses (user_id, category, amount_cents, spent_on, description, created_at) VALUES (1, 'groceries', 6000, '2025-02-15', '', '2025-02-15')\\\")\ndb.conn.commit()\nset_budget(db, 1, 'groceries', '2025-01', 5000)\nprint(budget_status(db, 1, '2025-01'))\n\"
-… [4 chars truncated]
+{"command": "python3 -c \"\nimport sys\nsys.path.insert(0, '.')\nfrom ledgerly.db import Database\nfrom ledgerly import reports\n\ndb = Database(':memory:')\nuser_id = 1\ndb.conn.execute('INSERT INTO users (id, email, created_at) VALUES (1, \\\"a@b.com\\\", \\\"2026-01-01\\\")')\ndb.execute('INSERT INTO expenses (user_id, category, amount_cents, spent_on, created_at) VALUES (?, ?, ?, ?, ?)', (1, 'food', 5000, '2026-01-15', '2026-01-15'))\nreports.set_budget(db, 1, 'food', '2026-03', 3000)\n\nstatus = reports.budget_status(db, 1, '2026-03')\nprint(status)\n\"\n"}
 ```
 
 **Tool result:**
@@ -69,123 +55,129 @@ Confirmed the JOIN has no month filter on expenses. Let me execute a reproductio
 ```
 Exit code 1
 Traceback (most recent call last):
-  File "<string>", line 2, in <module>
-ImportError: cannot import name 'DB' from 'ledgerly.db' (/private/var/folders/16/68bllkdn5n75d9gn5qj1thtw0000gp/T/tmp8p973wv8/repo/ledgerly/db.py)
+  File "<string>", line 9, in <module>
+sqlite3.OperationalError: table users has no column named email
 ```
 
 **Tool call → Bash**
 
 ```json
-{"command": "grep -n \"^class\\|def query\\|def execute\\|def __init__\" /Users/*/.  2>/dev/null; sed -n '1,60p' /private/var/folders/16/68bllkdn5n75d9gn5qj1thtw0000gp/T/tmp8p973wv8/repo/ledgerly/db.py"}
+{"command": "sed -n '1,120p' tests/test_ledgerly.py | grep -n \"budget_status\\|add_expense\\|create_user\\|def test_budget\" "}
 ```
 
 **Tool result:**
 
 ```
-"""SQLite persistence layer.
-
-All amounts are stored as integer cents to avoid floating point drift.
-"""
-
-import sqlite3
-from contextlib import contextmanager
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,
-    salt TEXT NOT NULL,
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS expenses (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL REFERENCES users(id),
-    amount_cents INTEGER NOT NULL,
-    category TEXT NOT NULL,
-    note TEXT NOT NULL DEFAULT '',
-    spent_on TEXT NOT NULL,
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS budgets (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL REFERENCES users(id),
-    c
-… [883 chars truncated]
+61:        eid = expenses.add_expense(db, user, 1250, "food", "2026-03-01", "lunch")
+68:        eid = expenses.add_expense(db, user, 500, "food", "2026-03-01")
+73:        eid = expenses.add_expense(db, user, 500, "food", "2026-03-01")
+80:            expenses.add_expense(db, user, 500, "yachts", "2026-03-01")
+83:        expenses.add_expense(db, user, 100, "food", "2026-03-01")
+84:        expenses.add_expense(db, user, 200, "transport", "2026-03-02")
+91:        expenses.add_expense(db, user, 100, "food", "2026-03-01")
+92:        expenses.add_expense(db, user, 250, "food", "2026-03-15")
+93:        expenses.add_expense(db, user, 400, "transport", "2026-04-01")
+96:    def test_budget_status(self, db, user):
+98:        expenses.add_expense(db, user, 350, "food", "2026-03-10")
+99:        status =
+… [155 chars truncated]
 ```
 
 **Tool call → Bash**
 
 ```json
-{"command": "grep -n \"^class\\|def query\\|def execute\\|def __init__\" /private/var/folders/16/68bllkdn5n75d9gn5qj1thtw0000gp/T/tmp8p973wv8/repo/ledgerly/db.py"}
+{"command": "sed -n '1,50p' tests/test_ledgerly.py"}
 ```
 
 **Tool result:**
 
 ```
-105:class Database:
-106:    def __init__(self, path=":memory:"):
-122:    def query(self, sql, params=()):
-126:    def query_one(self, sql, params=()):
-130:    def execute(self, sql, params=()):
+import pytest
+
+from ledgerly.db import Database
+from ledgerly import auth, expenses, reports
+from ledgerly.utils import parse_money, format_money, month_of, parse_iso_date
+
+
+@pytest.fixture()
+def db():
+    d = Database()
+    yield d
+    d.close()
+
+
+@pytest.fixture()
+def user(db):
+    return auth.register(db, "alice", "s3cretpass")
+
+
+class TestUtils:
+    def test_parse_money(self):
+        assert parse_money("12.50") == 1250
+        assert parse_money("$12.50") == 1250
+        assert parse_money("12") == 1200
+        assert parse_money("0.5") == 50
+
+    def test_parse_money_rejects_garbage(self):
+        for bad in ["", "abc", "-5", "12.345", "1,000"]:
+            with pytest.raises(ValueError):
+                parse_money(bad)
+
+    def test_format_money(self):
+        assert format_money(1
+… [551 chars truncated]
+```
+
+**Tool call → Bash**
+
+```json
+{"command": "python3 -c \"\nfrom ledgerly.db import Database\nfrom ledgerly import auth, expenses, reports\n\ndb = Database()\nuser = auth.register(db, 'alice', 's3cretpass')\n\nexpenses.add_expense(db, user, 5000, 'food', '2026-01-15')\nreports.set_budget(db, user, 'food', '2026-03', 3000)\n\nstatus = reports.budget_status(db, user, '2026-03')\nprint(status)\n\"\n"}
+```
+
+**Tool result:**
+
+```
+[{'category': 'food', 'limit': '$30.00', 'spent': '$50.00', 'remaining': '-$20.00', 'over_budget': True}]
 ```
 
 **Assistant:**
 
-Note: expenses table has `note`, not `description`. Let me fix the script accordingly.
+Reproduction confirms the claim exactly: a $50 January expense with no March expenses shows as $50 spent and over_budget=True for March. This is a clear, concrete, reachable correctness bug that contradicts the docstring and the PR's "no behavior change" claim.
 
 **Tool call → Bash**
 
 ```json
-{"command": "python3 -c \"\nfrom ledgerly.db import Database\nfrom ledgerly.reports import set_budget, budget_status\n\ndb = Database(':memory:')\ndb.execute(\\\"INSERT INTO users (id, username, password_hash, salt, created_at) VALUES (1,'a','h','s','2025-01-01')\\\")\ndb.execute(\\\"INSERT INTO expenses (user_id, category, amount_cents, note, spent_on, created_at) VALUES (1, 'groceries', 1000, '', '2025-01-15', '2025-01-15')\\\")\ndb.execute(\\\"INSERT INTO expenses (user_id, category, amount_cents, note, spent_on, created_at) VALUES (1, 'groceries', 6000, '', '2025-02-15', '2025-02-15')\\\")
-… [97 chars truncated]
+{"command": "python3 -m pytest tests/test_ledgerly.py -k budget -q"}
 ```
 
 **Tool result:**
 
 ```
-[{'category': 'groceries', 'limit': '$50.00', 'spent': '$70.00', 'remaining': '-$20.00', 'over_budget': True}]
+..                                                                       [100%]
+2 passed, 14 deselected in 0.95s
 ```
 
 **Assistant:**
 
-Reproduced exactly as claimed: January spend was only $10 but reports $70 spent and over_budget=True due to missing month filter in the JOIN.
+Existing tests pass (they don't catch the bug, as the finding notes), confirming it's a real, untested regression.
 
 **Tool call → Bash**
 
 ```json
-{"command": "grep -rn \"No behavior change\" /private/var/folders/16/68bllkdn5n75d9gn5qj1thtw0000gp/T/tmp8p973wv8/repo 2>/dev/null; grep -rn \"budget_status\" /private/var/folders/16/68bllkdn5n75d9gn5qj1thtw0000gp/T/tmp8p973wv8/repo --include=*.py | grep -v reports.py"}
+{"command": "echo done"}
 ```
 
 **Tool result:**
 
 ```
-(eval):1: no matches found: --include=*.py
+done
 ```
 
 **Assistant:**
 
-Confirmed via direct execution: the join is missing the month/spent_on filter, causing cross-month spend to leak into the current month's budget calculation — a genuine, reproducible correctness bug, not a test-coverage nitpick.
-
-**Tool call → Bash**
-
-```json
-{"command": "true"}
-```
-
-**Tool result:**
-
-```
-(Bash completed with no output)
-```
-
-**Assistant:**
-
-{"verdict": "CONFIRMED", "confidence": "high", "evidence": "Read ledgerly/reports.py lines 40-49: the LEFT JOIN condition is `e.user_id = b.user_id AND e.category = b.category` with no constraint tying e.spent_on to b.month. Reproduced with a live Database instance: inserted a $10 January groceries expense and a $60 February groceries expense, set a $50 January budget, and called budget_status(db, 1, '2025-01'). Output: {'category': 'groceries', 'limit': '$50.00', 'spent': '$70.00', 'remaining': '-$20.00', 'over_budget': True} — confirming spend aggregates across all months instead of just the requested month, exactly as the finding describes. This is a genuine runtime correctness regression (not a missing-test complaint), directly contradicting the docstring and the PR's 'no behavior change' claim.", "adjusted_severity": "critical"}
+{"verdict": "CONFIRMED", "confidence": "high", "evidence": "Read ledgerly/reports.py:40-49: the new LEFT JOIN in budget_status joins expenses to budgets on user_id and category only, with no spent_on/month filter on the expenses side (only budgets.month is filtered in WHERE). Reproduced with a live script: created a user, added a $50 'food' expense dated 2026-01-15, set a $30 'food' budget for month 2026-03, then called budget_status(db, user, '2026-03'). Output: {'category': 'food', 'limit': '$30.00', 'spent': '$50.00', 'remaining': '-$20.00', 'over_budget': True} — despite zero March expenses, confirming the query sums all-time spend for the category rather than just the requested month. Ran the existing budget tests (pytest -k budget) and they pass, confirming the bug is real and not caught by current tests since those tests only add expenses within the queried month. This directly contradicts the docstring 'Compare spend against each budget set for the month' and the PR's stated 'no behavior change intended'.", "adjusted_severity": "critical"}
 
 ---
-**Final result** (9 turns, 31.1s, $0.083):
+**Final result** (8 turns, 32.8s, $0.073):
 
-{"verdict": "CONFIRMED", "confidence": "high", "evidence": "Read ledgerly/reports.py lines 40-49: the LEFT JOIN condition is `e.user_id = b.user_id AND e.category = b.category` with no constraint tying e.spent_on to b.month. Reproduced with a live Database instance: inserted a $10 January groceries expense and a $60 February groceries expense, set a $50 January budget, and called budget_status(db, 1, '2025-01'). Output: {'category': 'groceries', 'limit': '$50.00', 'spent': '$70.00', 'remaining': '-$20.00', 'over_budget': True} — confirming spend aggregates across all months instead of just the requested month, exactly as the finding describes. This is a genuine runtime correctness regression (not a missing-test complaint), directly contradicting the docstring and the PR's 'no behavior change' claim.", "adjusted_severity": "critical"}
+{"verdict": "CONFIRMED", "confidence": "high", "evidence": "Read ledgerly/reports.py:40-49: the new LEFT JOIN in budget_status joins expenses to budgets on user_id and category only, with no spent_on/month filter on the expenses side (only budgets.month is filtered in WHERE). Reproduced with a live script: created a user, added a $50 'food' expense dated 2026-01-15, set a $30 'food' budget for month 2026-03, then called budget_status(db, user, '2026-03'). Output: {'category': 'food', 'limit': '$30.00', 'spent': '$50.00', 'remaining': '-$20.00', 'over_budget': True} — despite zero March expenses, confirming the query sums all-time spend for the category rather than just the requested month. Ran the existing budget tests (pytest -k budget) and they pass, confirming the bug is real and not caught by current tests since those tests only add expenses within the queried month. This directly contradicts the docstring 'Compare spend against each budget set for the month' and the PR's stated 'no behavior change intended'.", "adjusted_severity": "critical"}
