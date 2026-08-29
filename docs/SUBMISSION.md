@@ -31,6 +31,15 @@ Four required items, per the challenge page:
 - [x] All trajectories rendered to .md; representative set indexed in the
       README (incl. the verifier that reproduces the reopen-crash)
 
+## Breadth added on day 2 (all live in the repo)
+- [x] `--pr` mode: review any GitHub PR, `--post-comment`, `--baseline`
+      — demonstrated live on PR #1 of the public repo
+- [x] Dogfood: RevGuard found 2 real security bugs in its own `--pr`
+      feature; fixed on `main` (`ea2375c`), regression-tested
+- [x] `v5-fast` cost-ladder config, measured (changelog "Post-final")
+- [x] `replay/`: external validity on 3 real escaped OSS bugs
+- [x] Public repo: https://github.com/bhopals/revguard
+
 ## Packaging notes
 - HackerEarth form: repository archive or link + video. Prefer a public
   GitHub repo (single `git push`) + unlisted video link.

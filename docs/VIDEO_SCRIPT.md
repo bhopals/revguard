@@ -69,14 +69,21 @@ Show the HTML report (case21_report.html) and the verifier trajectory md.
 > because its brief was permissive. We removed the lane and kept the
 > permissiveness."
 
-## 3:40–4:20 — Real-world workflow (terminal)
+## 3:40–4:20 — Real-world workflow + the dogfood moment (browser + terminal)
 
-    python3 revguard.py --repo <this repo> --base HEAD~1
+Show GitHub PR #1 on the public repo, scroll the two RevGuard comments.
 
-> "It's not just a benchmark harness — point it at any git repo. It
-> reviewed its own latest commit and [what it found]. Reports come out
-> as markdown and a self-contained HTML page a reviewer would actually
-> sign."
+> "It's not just a benchmark harness — `revguard.py --pr` reviews any
+> GitHub pull request. Here's the honest proof it works: I opened a real
+> PR on this repo adding a flag, with one bug I planted. RevGuard found
+> my planted bug — AND two real security holes I'd accidentally written
+> into the PR feature itself: argument injection through a git ref name,
+> which its verifier reproduced by building a malicious ref, and prompt
+> injection through the PR text. I fixed both; the second comment shows
+> the re-review confirming they're gone. The tool made its own next
+> version safer. It also flags real bugs in the wild — in `replay/` it
+> catches three that shipped past human review in popular libraries, one
+> that lived eighteen months before anyone found it."
 
 ## 4:20–4:45 — Hot take
 
