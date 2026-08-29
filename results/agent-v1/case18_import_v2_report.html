@@ -1,0 +1,58 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Importer v2: category mapping and atomic batches</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Importer v2: category mapping and atomic batches</h1>
+<div class="sub">Statement import learns two things users kept asking for: map merchant descriptions to categories (case-insensitive prefix rules, e.g. &#x27;COFFEE&#x27; -&gt; food), and all-or-nothing batches so a bad row no longer leaves a half-imported statement. Duplicate detection was also simplified and sped up by keying on (date, amount).</div>
+<span class="verdict" style="background:#c62828">Request changes — 3 confirmed finding(s), 1 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. &quot;Atomic&quot; batch import is not atomic: rows are committed individually via nested transactions</strong>
+  <div class="loc">ledgerly/importers.py:112 &middot; correctness</div>
+  <div>import_statement wraps the row loop in `with db.transaction():` (line 107) to make the batch all-or-nothing, but add_expense() calls db.execute() (expenses.py:24, db.py:126-129), which opens its own `with db.transaction():` and calls self.conn.commit() immediately after each insert. sqlite3&#x27;s connection has no real nested-transaction/savepoint support here, so each per-row commit() commits the whole current transaction, including all expenses added earlier in the same import loop. If a later row fails category_for()&#x27;s unknown-category check (line 83-85) and raises ImportError_, the outer transaction&#x27;s except-block calls self.conn.rollback(), but the earlier rows are already permanently committed and there is nothing left to roll back. Concretely: import a 4-row statement with category_map={&quot;STREAM&quot;: &quot;yachts&quot;} where STREAM is the last matching row — the first three expenses get inserted and committed, the import_batches row never gets written (its insert never runs), and the function raises instead of returning (imported, skipped). This directly contradicts the documented and tested guarantee (&#x27;if any row cannot be imported, no expense from this statement is recorded&#x27;) and leaves the database in a half-imported state with no audit record, which the PR explicitly claims to prevent. The existing test (test_mapping_to_unknown_category) doesn&#x27;t catch this because it maps the very first row&#x27;s prefix, so no prior row is ever committed before the failure.</div>
+  
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>2. category_for is not actually case-insensitive for the mapping keys</strong>
+  <div class="loc">ledgerly/importers.py:82 &middot; correctness</div>
+  <div>The docstring and PR description promise &#x27;case-insensitive prefix rules&#x27;, but category_for() only upper-cases the description (`desc.upper()`) and compares it against `prefix` as-is, without upper-casing the prefix. A category_map with a lower- or mixed-case key, e.g. {&quot;Coffee&quot;: &quot;food&quot;} or {&quot;stream&quot;: &quot;entertainment&quot;} — a very natural way to write these rules since the target category values themselves are lowercase — will never match any description, silently falling back to DEFAULT_CATEGORY (&#x27;other&#x27;) for every transaction that should have been categorized. The only test (test_prefix_mapping) happens to use all-uppercase keys, so this regression is not caught.</div>
+  
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>3. Duplicate detection keyed only on (date, amount) causes silent data loss for distinct same-day, same-amount transactions</strong>
+  <div class="loc">ledgerly/importers.py:92 &middot; correctness</div>
+  <div>_is_duplicate() was changed to match only on (user_id, spent_on, amount_cents), dropping the description/note that was previously part of the key. Two genuinely distinct transactions that happen to share the same date and amount — e.g. two separate $9.99 charges on the same day from different merchants, or two identical-price coffee purchases in one day — will now cause the second one to be treated as a duplicate and silently skipped, even within a single statement import (each add_expense call commits immediately per the nested-transaction bug, so the row is visible to the very next _is_duplicate() check in the same loop). This is a real regression from the prior behavior (which also compared note/description) and results in legitimate expenses being dropped without any error or warning — they&#x27;re just counted as &#x27;skipped duplicates&#x27; — which is a meaningful correctness/data-loss issue for a financial ledger.</div>
+  
+</div>
+<footer>Pipeline: reviewer_generalist (3) &middot; 100.9s &middot;
+$0.18 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

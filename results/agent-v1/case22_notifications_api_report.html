@@ -1,0 +1,58 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Notifications API + weekly digest job</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Notifications API + weekly digest job</h1>
+<div class="sub">Exposes notifications over the API (list unread, mark read) and adds send_weekly_digests(), the scheduled job that mails every user a spending digest for the month and tidies up their notification list.</div>
+<span class="verdict" style="background:#c62828">Request changes — 3 confirmed finding(s), 1 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. Weekly digest is marked read immediately after creation, so it never appears as unread</strong>
+  <div class="loc">ledgerly/notify.py:92 &middot; correctness</div>
+  <div>In send_weekly_digests, notify(db, uid, &quot;digest&quot;, body) inserts a new unread notification (line 92), and the very next statement (lines 93-96) runs `UPDATE notifications SET read_at = ? WHERE user_id = ?` with no created_at/id filter, so it also marks the row just inserted as read. Since db.execute commits immediately (ledgerly/db.py:126-129), every digest notification is read_at-stamped before the function returns. Consequently notify.unread(db, uid) and the new GET /notifications endpoint never surface the digest to the user, and any delivery worker that (per the module docstring) &#x27;reads unread rows&#x27; will never see it either — the digest is silently discarded even though send_weekly_digests reports it as &#x27;sent&#x27;. The test added for this (tests/test_notify.py:47-52) is written so it cannot catch the bug: line 50 ends with `or True`, making that assertion always pass, and line 52&#x27;s `&lt;= 1` check passes whether 0 or 1 digests are unread.</div>
+  
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>2. GET /notifications allows reading any user&#x27;s notifications via user_id parameter</strong>
+  <div class="loc">ledgerly/api.py:146 &middot; security</div>
+  <div>get_notifications takes uid from `request.params.get(&quot;user_id&quot;, request.user_id)` instead of using the authenticated request.user_id directly. Any authenticated caller can pass `?user_id=&lt;other_id&gt;` to read another user&#x27;s notification list (including budget-alert and digest bodies, which can reveal spending details). Every other authenticated GET handler in this file (get_expenses, get_summary, get_budgets) uses request.user_id exclusively with no client-supplied override; this handler is the only one that trusts a client-supplied user id for authorization, and there is no ownership/household check performed before returning the data.</div>
+  
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>3. POST /notifications/read marks any notification as read without checking ownership</strong>
+  <div class="loc">ledgerly/api.py:153 &middot; security</div>
+  <div>post_notification_read runs `UPDATE notifications SET read_at = ? WHERE id = ?` using only the client-supplied notification_id, with no `user_id = request.user_id` constraint. Any authenticated user can mark any other user&#x27;s notification (e.g. an over-budget alert or digest) as read by guessing/enumerating small integer ids, causing that notification to disappear from the victim&#x27;s unread list. The codebase already has a correctly scoped helper, notify.mark_read(db, user_id, notification_id) (ledgerly/notify.py:29-34), which filters by `id = ? AND user_id = ?` and is covered by tests/test_notify.py:14-17 (test_mark_read_scoped_to_user); this new API handler bypasses that helper and reimplements the update without the ownership check.</div>
+  
+</div>
+<footer>Pipeline: reviewer_generalist (3) &middot; 70.6s &middot;
+$0.16 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

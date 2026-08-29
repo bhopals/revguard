@@ -1,0 +1,110 @@
+{
+  "case": "case19_household_invites",
+  "system": "agent-v3",
+  "findings": [
+    {
+      "file": "ledgerly/household.py",
+      "line": 91,
+      "category": "security",
+      "title": "Invite codes generated with non-cryptographic RNG and tiny keyspace",
+      "severity": "critical",
+      "description": "create_invite() derives the code from Python's `random` module (Mersenne Twister, seeded from OS entropy but not a CSPRNG) instead of `secrets`, which the codebase already uses for session tokens in auth.py (`secrets.token_urlsafe(32)`). Worse, the code is only 6 hex characters (`random.randrange(16 ** 6)`), i.e. 2^24 \u2248 16.7M possible values. Combined with accept_invite() having no rate limiting and the invite never expiring or being consumed (see used_at, never set), an attacker who knows/guesses a household exists can script accept_invite() with random 6-hex-char strings and, within a practically small number of attempts, join any household as a member \u2014 gaining access to that household's shared expenses and the ability to add/see financial data they were never authorized to see.",
+      "reviewer": "security",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/household.py: create_invite() uses `random.randrange(16 ** 6)` (Mersenne Twister, not secrets) formatted as 6 hex chars, giving a keyspace of 16,777,216 (16**6=16777216, confirmed via python3). accept_invite() only checks `SELECT household_id FROM invites WHERE code = ?` and inserts membership \u2014 it never reads or sets `used_at`, and there is no expiry check, so invites are reusable indefinitely by design. Grepped the whole repo for rate-limiting (`rate_limit`, `throttle`, `lockout`) and found none outside the test/household files, confirming accept_invite has no attempt throttling anywhere in the call path. auth.py by contrast uses `secrets.token_urlsafe(32)`/`secrets.token_hex(16)`, confirming the inconsistency claim. All elements of the finding (weak RNG, tiny keyspace, no rate limit, no expiry/consumption) are verified directly in the code.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "ledgerly/household.py",
+      "line": 110,
+      "category": "correctness",
+      "severity": "major",
+      "title": "accept_invite bypasses the household member cap enforced by add_member",
+      "description": "add_member() (line 59) enforces MAX_MEMBERS=12 before inserting a new household_members row, but accept_invite() (lines 100-115) never checks this limit before its own INSERT at line 110-113. Since an owner can call create_invite() repeatedly (the code is never marked used \u2014 the invites.used_at column is written by no code path) and share the same or new codes, any number of users can call accept_invite() and join a household past the 12-member cap, silently dropping a guarantee the pre-existing add_member() path enforced. This also means a single invite code can be redeemed by unlimited distinct users indefinitely (only same-user re-acceptance is blocked via the 'already a member' check at line 108), since used_at is never set to mark the invite consumed.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/household.py: add_member() (lines 51-67) enforces MAX_MEMBERS=12 via a COUNT(*) check before inserting into household_members, but accept_invite() (lines 100-115) has no such check before its own INSERT. Grep for 'used_at' shows it's only referenced in the invites table schema (db.py) and never written anywhere in the codebase, so an invite is never marked consumed. Reproduced live: created a household with 1 owner, generated one invite code, then had 20 distinct newly-registered users call accept_invite() with that same code in a loop \u2014 all 20 succeeded, growing the household to 21 members (vs. the 12-member cap), and invites.used_at remained NULL throughout. Full test suite (tests/test_household.py) still passes, confirming this gap isn't caught by existing tests.",
+        "adjusted_severity": "major"
+      }
+    },
+    {
+      "file": "ledgerly/household.py",
+      "line": 100,
+      "category": "security",
+      "title": "Invite codes never expire or become single-use, unlike session tokens",
+      "severity": "major",
+      "description": "accept_invite() only checks that the code exists in the invites table and that the caller isn't already a member; it never checks an expiry (auth.py's tokens table enforces TOKEN_TTL_HOURS and deletes expired tokens) and never marks the invite consumed even though the schema has a `used_at` column for exactly that purpose (ledgerly/db.py:96). As a result, a single 6-character code created once by an owner remains valid forever and can be redeemed by an unlimited number of distinct users indefinitely. This removes any time bound on brute-force guessing (finding above) and means a leaked/shared code (e.g. pasted in a group chat, screenshot) grants household access to anyone who finds it at any point in the future, with no way for the owner to revoke it short of manual DB access.",
+      "reviewer": "security",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read household.py: accept_invite() only does a SELECT by code and a membership check; it never sets used_at or checks any expiry/created_at window, unlike auth.py tokens which enforce TOKEN_TTL_HOURS and reject expired rows. Confirmed via in-memory sqlite execution: created one invite code, then had 5 distinct newly-created users each call accept_invite() with the same code -- all 5 succeeded and joined the household, and invites.used_at remained NULL after all redemptions. Grep across ledgerly/ shows no other code path touches the invites table or enforces expiry/single-use, so the gap is real and unmitigated.",
+        "adjusted_severity": "major"
+      }
+    },
+    {
+      "file": "tests/test_household.py",
+      "line": 88,
+      "category": "test-adequacy",
+      "title": "Test name implies single-use invite codes but never verifies it",
+      "description": "The invites table adds a `used_at` column (ledgerly/db.py) suggesting invite codes are meant to be single-use, but accept_invite() never sets `used_at` or otherwise invalidates the code after use. test_member_cannot_accept_twice (lines 88-93) reuses the same code with the same user and expects HouseholdError, but that error actually comes from the pre-existing 'already a member' check in accept_invite (line 108-109 of household.py), not from any invite-exhaustion logic. No test exercises the real risk: the same code being redeemed by a second, different user after the first has already joined. As written, accept_invite would let unlimited distinct users join a household with one leaked/shared invite code, and the test suite gives no signal of this because the only 'reuse' test happens to hit an unrelated guard.",
+      "reviewer": "tests",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read household.py: create_invite/accept_invite never reference used_at (confirmed via grep -n 'used_at' ledgerly/*.py, only hit is the schema column in db.py). Reproduced with a live script: created a household, issued one invite code, and had two distinct users (bob, carol) each successfully call accept_invite with the identical code \u2014 both joined with no error, household ended up with 3 members from one code. This matches the claim that accept_invite lets unlimited distinct users redeem a single leaked code. Also confirmed the existing test_member_cannot_accept_twice only reuses the code with the SAME user twice, so it hits the pre-existing 'already a member' guard (household.py accept_invite), not any invite-exhaustion check, giving no test signal on the real multi-user reuse risk.",
+        "adjusted_severity": "major"
+      },
+      "severity": "major"
+    },
+    {
+      "file": "tests/test_household.py",
+      "line": 73,
+      "category": "test-adequacy",
+      "title": "No test that accept_invite respects the household member cap",
+      "description": "add_member() enforces MAX_MEMBERS (household.py:59-60), but the new accept_invite() path (household.py:100-115) performs no such check, letting a household exceed MAX_MEMBERS when members join via invite code. The TestInvites class adds no test covering a household at capacity, so this behavioral gap between the two join paths ships without any test coverage that would catch a full household silently accepting more members through an invite.",
+      "reviewer": "tests",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/household.py: add_member() checks `count >= MAX_MEMBERS` (line 59) before inserting, but accept_invite() (lines 100-115) has no such check. Grepped the whole codebase for MAX_MEMBERS and it appears only twice, both in add_member's definition/check \u2014 confirming no safeguard exists on the invite path. Wrote and ran a reproduction script: filled a household to MAX_MEMBERS=12 via add_member, verified a 13th add_member call is correctly rejected ('household is full'), then created an invite code and called accept_invite for a new user \u2014 it succeeded, growing the household to 13 members (output: 'member count after invite accept: 13'). Reviewed tests/test_household.py's TestInvites class (4 tests: invite_flow, only_owner_invites, bad_code, member_cannot_accept_twice) \u2014 none exercise a household at capacity, so this gap ships without test coverage.",
+        "adjusted_severity": "major"
+      },
+      "severity": "major"
+    }
+  ],
+  "raw_finding_count": 5,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 1,
+      "seconds": 29.6,
+      "cost_usd": 0.0777756
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 2,
+      "seconds": 51.2,
+      "cost_usd": 0.10824500000000001
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 2,
+      "seconds": 25.3,
+      "cost_usd": 0.061710600000000004
+    },
+    {
+      "stage": "verifier",
+      "in": 5,
+      "confirmed": 5,
+      "seconds": 28.8
+    }
+  ],
+  "seconds": 80.0,
+  "cost_usd": 0.5828
+}

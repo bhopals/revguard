@@ -1,0 +1,58 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Report performance: single-query budget status</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Report performance: single-query budget status</h1>
+<div class="sub">budget_status did 1 + N queries (a summary plus one per budget). This PR collapses it into a single LEFT JOIN aggregate, adds a covering index for the expense lookup path, and relaxes sqlite synchronous mode for faster writes. No behavior change intended.</div>
+<span class="verdict" style="background:#c62828">Request changes — 3 confirmed finding(s), 1 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. budget_status no longer filters expenses by month, summing all-time spend</strong>
+  <div class="loc">ledgerly/reports.py:44 &middot; correctness</div>
+  <div>The rewritten query joins expenses to budgets on user_id and category only (`e.user_id = b.user_id AND e.category = b.category`), with no filter on `spent_on`/month. The original code computed spend via `monthly_summary`, which filters expenses to `substr(spent_on, 1, 7) = month`. Now every expense ever recorded in that category (across all months) is summed into `spent`, so budget_status for March will include expenses from January, February, next year, etc. Example: user has a $50 food budget for 2026-03 with a single $10 March expense, but also has a $40 February food expense; budget_status now reports spent=$50 (over_budget True) instead of the correct spent=$10. This directly contradicts the PR&#x27;s &#x27;no behavior change intended&#x27; claim and silently inflates spend/over-budget flags for any user with expense history in more than one month. The existing test (test_budget_status) only has expenses in the queried month, so it doesn&#x27;t catch this.</div>
+  
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>2. New CREATE INDEX statement is not idempotent, breaking schema re-initialization</strong>
+  <div class="loc">ledgerly/db.py:100 &middot; robustness</div>
+  <div>Every other DDL statement in SCHEMA uses `CREATE TABLE IF NOT EXISTS`, so `executescript(SCHEMA)` is safe to run repeatedly against the same on-disk database file (e.g. app restart re-instantiating `Database(path)`). The new `CREATE INDEX idx_expenses_user_category ON expenses (...)` lacks `IF NOT EXISTS`, so the second time a process opens an existing persistent database file, `executescript` raises `sqlite3.OperationalError: index idx_expenses_user_category already exists` and `Database.__init__` fails entirely, taking down the whole app on restart. This is masked by tests because they only use the in-memory default (`Database()`), which never has a pre-existing index to collide with.</div>
+  
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>3. synchronous=OFF risks losing/corrupting committed financial data on crash</strong>
+  <div class="loc">ledgerly/db.py:110 &middot; robustness</div>
+  <div>Setting `PRAGMA synchronous = OFF` tells SQLite to skip fsync-ing at critical points; on an OS crash or power loss, a committed transaction can be silently lost or, in the worst case, the database file can be left corrupted (not just missing recent writes, unlike NORMAL/FULL where corruption is not possible). For a financial ledger recording money amounts, this trades correctness/durability guarantees for write speed with no compensating safeguard (e.g. WAL mode plus synchronous=NORMAL would be a safer speed/durability tradeoff). This was introduced in the same PR as an unrelated &#x27;performance&#x27; change and isn&#x27;t mentioned as a risk in the PR description (&#x27;No behavior change intended&#x27;), but it is a durability behavior change that can cause committed expense/budget writes to vanish or the DB file to corrupt after a crash.</div>
+  
+</div>
+<footer>Pipeline: reviewer_generalist (3) &middot; 44.0s &middot;
+$0.10 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

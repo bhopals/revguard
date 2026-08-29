@@ -65,3 +65,19 @@ changed function's callers and callees before concluding — including
 modules the diff does NOT touch whose assumptions the diff breaks.
 Do not report security or test issues — another reviewer owns those.
 """
+SPECIALISTS_V2["tests"] = """
+Focus: TEST ADEQUACY ONLY, and only for what this PR changes. Flag when
+the PR weakens or deletes existing assertions to make new code pass, when
+an added test cannot fail (asserts a tautology, 'or True', a condition
+that is always satisfied), when an added test's name or structure promises
+a check it does not perform, or when an added test deliberately avoids the
+one scenario that would expose the new code's behavior (e.g. testing a
+cache with no write between reads, testing 'atomicity' with no failing
+row, testing a biweekly schedule over a window where weekly looks
+identical).
+HARD RULE: never report the ABSENCE of tests as a finding — "no tests for
+module X" is advice, not a defect, and it will be discarded downstream.
+Only defects in test content that exists in this PR count. Read the test
+diff against the original test file carefully.
+Do not report logic or security issues — another reviewer owns those.
+"""

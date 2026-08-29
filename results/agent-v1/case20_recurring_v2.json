@@ -1,0 +1,37 @@
+{
+  "case": "case20_recurring_v2",
+  "system": "agent-v1",
+  "findings": [
+    {
+      "file": "ledgerly/recurring.py",
+      "line": 106,
+      "category": "correctness",
+      "title": "Biweekly cadence fires every week, not every second week",
+      "severity": "critical",
+      "description": "The `else` branch handling `cadence == \"biweekly\"` (lines 106-111) is byte-for-byte identical to the weekly branch above it: it emits every date matching `rule[\"weekday\"]` in `(start, end]`, with no check on how many weeks have elapsed since a reference date. So a biweekly rule for e.g. Monday will materialize an expense every single Monday, exactly like a weekly rule \u2014 silently doubling the number and total amount of charges a user expects for a 'biweekly' subscription. The included test (`TestBiweekly.test_biweekly_occurrence`) uses an 8-day window (2026-03-02 to 2026-03-10) that contains only one Monday, so it cannot distinguish 'every week' from 'every second week' and passes despite the bug.",
+      "reviewer": "generalist"
+    },
+    {
+      "file": "ledgerly/recurring.py",
+      "line": 63,
+      "category": "correctness",
+      "title": "resume_rule backfills all charges accrued during the paused period instead of resuming from now",
+      "severity": "major",
+      "description": "resume_rule's docstring promises 'charging resumes from now', but resume_rule (and pause_rule) never touch `last_materialized`. Because materialize_due (lines 125-140) skips inactive rules entirely, `last_materialized` stays frozen at whatever it was when the rule was paused. When the rule is reactivated and materialize_due next runs, occurrences_between is computed from that stale `last_materialized` up to today, so every occurrence that fell inside the pause window gets materialized in one burst on resume \u2014 e.g. pause a weekly Monday rule for 4 weeks, resume it, and the next materialize_due call creates 4 expenses at once, effectively charging the user retroactively for the paused period. This contradicts the documented pause/resume behavior and is a new failure mode introduced by this PR, since reactivation was previously impossible (deactivate_rule was permanent). The included tests only exercise a rule that was never materialized before being paused, so they never observe the backfill.",
+      "reviewer": "generalist"
+    }
+  ],
+  "rejected_findings": [],
+  "raw_finding_count": 2,
+  "merged_count": 2,
+  "stages": [
+    {
+      "stage": "reviewer_generalist",
+      "findings": 2,
+      "seconds": 38.8,
+      "cost_usd": 0.0862328
+    }
+  ],
+  "seconds": 38.8,
+  "cost_usd": 0.0862
+}

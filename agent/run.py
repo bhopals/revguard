@@ -27,7 +27,6 @@ from agent.prompts.specialists import SPECIALISTS, SPECIALISTS_V2  # noqa: E402
 from tools.case_utils import build_workdir, list_cases, load_meta, make_diff  # noqa: E402
 
 PROMPTS = ROOT / "agent" / "prompts"
-VERIFIER_PROMPT = (PROMPTS / "verifier.md").read_text()
 
 # `common` picks the base reviewer brief: reviewer_common.md is the original
 # conservative calibration (v1-v4, kept frozen for reproducibility);
@@ -43,7 +42,11 @@ CONFIGS = {
     "v4": {"specialists": ["correctness", "security", "tests", "nitpick"],
            "verify": True, "common": "reviewer_common.md"},
     "v5": {"specialists": ["correctness", "security", "tests"], "verify": True,
-           "common": "reviewer_common_v2.md", "specialist_set": "v2"},
+           "common": "reviewer_common_v2.md", "specialist_set": "v2",
+           # v2 verifier adds a policy gate: measurement on v3 showed the
+           # original verifier confirmed 54/54 findings — it checked truth
+           # but never whether a true observation is actually a defect.
+           "verifier": "verifier_v2.md"},
 }
 
 REVIEW_TASK = """Review this pull request.
@@ -112,7 +115,8 @@ def run_specialist(name, common_prompt, title, description, diff, files,
     return findings, res
 
 
-def run_verifier(finding, title, diff, make_sandbox, traj_dir, idx):
+def run_verifier(finding, title, diff, make_sandbox, traj_dir, idx,
+                 verifier_prompt):
     """Each verification runs in a FRESH copy of the repo so one verifier's
     scratch files or edits can never contaminate another's evidence."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -124,7 +128,7 @@ def run_verifier(finding, title, diff, make_sandbox, traj_dir, idx):
         )
         res = run_agent(
             prompt,
-            system_prompt=VERIFIER_PROMPT,
+            system_prompt=verifier_prompt,
             cwd=work,
             allowed_tools=("Read", "Grep", "Glob", "Bash"),
             trajectory_path=Path(traj_dir) / f"verifier_{idx:02d}.jsonl",
@@ -178,9 +182,11 @@ def review_diff(config_name, title, description, diff, files, workdir,
         verify_seconds = 0.0
         confirmed = []
         with ThreadPoolExecutor(max_workers=4) as pool:
+            verifier_prompt = (
+                PROMPTS / cfg.get("verifier", "verifier.md")).read_text()
             futs = {
                 pool.submit(run_verifier, f, title, diff, make_sandbox,
-                            traj_dir, i): (i, f)
+                            traj_dir, i, verifier_prompt): (i, f)
                 for i, f in enumerate(merged)
             }
             for fut in futs:
