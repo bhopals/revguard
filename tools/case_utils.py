@@ -37,6 +37,29 @@ def list_cases():
     return sorted(p for p in CASES_DIR.iterdir() if (p / "meta.json").exists())
 
 
+def resolve_case(spec):
+    """Turn a --case value into a real case directory. Accepts a full path
+    ('cases/case21_perf_reports'), a bare case name ('case21_perf_reports'),
+    or a substring/prefix that uniquely names one case ('case21', '21').
+    Raises SystemExit with a helpful message otherwise."""
+    p = Path(spec)
+    if (p / "meta.json").exists():
+        return p
+    if (CASES_DIR / spec / "meta.json").exists():
+        return CASES_DIR / spec
+    names = [c.name for c in list_cases()]
+    matches = [n for n in names
+               if n == spec or n.startswith(spec)
+               or spec in n or f"case{spec}" == n or n.startswith(f"case{spec}_")]
+    if len(matches) == 1:
+        return CASES_DIR / matches[0]
+    import sys
+    if not matches:
+        sys.exit(f"no case matches {spec!r}. Available cases:\n  "
+                 + "\n  ".join(names))
+    sys.exit(f"{spec!r} is ambiguous — matches {matches}. Be more specific.")
+
+
 def changed_files(case_dir):
     """Relative paths of every file the PR touches (added or modified)."""
     changed_root = Path(case_dir) / "changed"

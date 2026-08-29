@@ -317,7 +317,8 @@ def write_report(path, meta, findings, config_name):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True, choices=list(CONFIGS))
-    ap.add_argument("--case", help="single case directory")
+    ap.add_argument("--case", help="single case: a path (cases/case21_perf_reports),"
+                    " a bare name (case21_perf_reports), or a unique prefix (case21)")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--run-name", help="results dir name (default"
                     " agent-<config>); use e.g. agent-v5-r2 for repeat runs")
@@ -328,7 +329,8 @@ def main():
     traj_root = ROOT / "trajectories" / name
     work_root = Path(tempfile.gettempdir()) / f"revguard-work-{name}"
 
-    cases = [Path(args.case)] if args.case else list_cases()
+    from tools.case_utils import resolve_case
+    cases = [resolve_case(args.case)] if args.case else list_cases()
     for case in cases:
         meta = load_meta(case)
         if not args.force and (out_root / f"{meta['id']}.json").exists():
