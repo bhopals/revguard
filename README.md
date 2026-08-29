@@ -92,14 +92,44 @@ identically to baseline and agent. See `eval/score.py`.
 
 ## Results
 
-<!-- RESULTS_TABLE -->
+Two findings, in order of importance:
 
-*(Numbers are produced by `make eval` from the JSONs in `results/`; every
-cell traces to files in this repo.)*
+**1. The base model has solved small-PR review.** On the 16 small-PR
+cases the one-prompt baseline found 39/39 seeded defects. Any agent
+machinery there is overhead — ours included. We report this instead of
+hiding it.
+
+**2. Where review is actually hard, the pipeline wins on every metric.**
+On the six tier-3 PRs (150–400 line multi-file diffs, cross-module bugs,
+misleading tests):
+
+| system | found | recall | precision | F1 | false positives |
+|---|---|---|---|---|---|
+| baseline (same model, 1 prompt) | 19/22 | 0.86 | 0.90 | 0.884 | 2 |
+| **RevGuard v5** | **20/22** | **0.91** | **0.95** | **0.930** | **1** |
+
+Across all 22 cases: baseline F1 0.928 with 6 false positives; v5 F1
+0.887 with 3 — the overall gap is entirely the saturated small-PR tier.
+Neither system ever flagged anything on the two clean PRs. A tier-3
+review costs v5 ~2 minutes and ~$0.50 against 30–60 minutes of a senior
+engineer's attention. Every cell traces to a JSON under `results/`;
+`make eval` regenerates the table, and `docs/dashboard.html` renders the
+full per-case grid.
+
+Characteristic difference in *behavior*, not just numbers: when the
+baseline can't confirm a suspicion from the diff alone, it hedges —
+real defects come back as "there's no test covering X" advisories. The
+pipeline reads the repo and executes reproductions instead: its report
+for the perf-refactor case doesn't argue the reopen-crash is likely, it
+opens the database twice in a sandbox and shows the OperationalError.
 
 ## Improvement changelog
 
-<!-- CHANGELOG -->
+The full, honest iteration story — including the version that was worse
+than the baseline, the verifier that confirmed 54/54 findings, and the
+experiment we removed for the opposite of the expected reason — is in
+**[docs/CHANGELOG.md](docs/CHANGELOG.md)**. Every entry has measured
+numbers.
 
 ## Reproduction
 
@@ -123,4 +153,17 @@ docs/            reproduction guide
 
 ## Main failure mode and hot take
 
-<!-- HOT_TAKE -->
+Short version — the full argument closes [docs/CHANGELOG.md](docs/CHANGELOG.md):
+
+- **Failure mode:** filtering stages don't just remove noise, they define
+  what the system is allowed to notice. Two real tier-3 defects were
+  *mentioned* by reviewers in adjacent framings and then lost to lane
+  boundaries or the policy gate. Every gate you add needs its own
+  miss-audit.
+- **Hot take:** verification checks truth, but most bad review comments
+  are *true* ("there are no tests for X" — correct, and still noise).
+  Our truth-only verifier confirmed 54/54 findings: pure cost. A useful
+  verifier needs a policy gate, and the reviewers feeding it should be
+  permissive *because* it exists. And don't build agents for regimes the
+  base model already solved — benchmark until you find where it breaks,
+  then build exactly there.
