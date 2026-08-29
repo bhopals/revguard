@@ -64,14 +64,15 @@ def review_case(case_dir, out_dir, traj_dir):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--case", help="single case directory")
+    ap.add_argument("--case", help="single case: a path, a bare name, or a"
+                    " unique prefix (e.g. cases/case21_perf_reports, case21)")
     ap.add_argument("--out", default=str(ROOT / "results" / "baseline"))
     ap.add_argument("--traj", default=str(ROOT / "trajectories" / "baseline"))
     ap.add_argument("--force", action="store_true", help="re-run existing")
     args = ap.parse_args()
 
-    from tools.case_utils import list_cases
-    cases = [Path(args.case)] if args.case else list_cases()
+    from tools.case_utils import list_cases, resolve_case
+    cases = [resolve_case(args.case)] if args.case else list_cases()
     for case in cases:
         meta = load_meta(case)
         if not args.force and (Path(args.out) / f"{meta['id']}.json").exists():
