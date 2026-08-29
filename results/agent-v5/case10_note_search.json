@@ -1,0 +1,52 @@
+{
+  "case": "case10_note_search",
+  "system": "agent-v5",
+  "findings": [
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 68,
+      "category": "security",
+      "title": "SQL injection via unvalidated `sort` parameter",
+      "severity": "critical",
+      "description": "`search_expenses` builds the SQL string with `f\" ORDER BY {sort} DESC\"`, directly interpolating the caller-supplied `sort` argument into the query instead of using a parameter or a whitelist of allowed column names. Any caller (e.g., an API endpoint exposing this as a `sort` query parameter) can pass a value like `spent_on; DROP TABLE expenses; --` or a subquery/UNION-based payload (e.g., `(SELECT CASE WHEN (1=1) THEN spent_on ELSE spent_on END)` or a value containing arbitrary SQL) to inject SQL through the ORDER BY clause. Unlike `list_expenses`, which only interpolates a fixed literal `spent_on DESC, id DESC`, this new function passes through an arbitrary user-controlled string, giving an attacker SQL injection scoped to any query surface that forwards a `sort` value to this function.",
+      "reviewer": "security",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/expenses.py:63-70: search_expenses builds `f\" ORDER BY {sort} DESC\"` with the caller-supplied `sort` argument directly interpolated into SQL, with no whitelist check anywhere in the codebase (grepped for whitelist/allowed_sort/'sort in' \u2014 none found). Executed a live reproduction against an in-memory sqlite3 DB via ledgerly.db.Database: called search_expenses(db, 1, 'lunch', sort=\"(SELECT CASE WHEN (SELECT password_hash FROM users LIMIT 1)='h' THEN spent_on ELSE spent_on END)\") and the boolean-based subquery payload executed successfully as part of the ORDER BY clause, confirming arbitrary SQL evaluation via the sort parameter (cross-table blind exfiltration is feasible). A stacked-statement DROP TABLE payload was blocked only by Python's sqlite3 single-statement restriction, not by the application code, so injection is real and only limited to non-stacked payloads (still enables blind/boolean/UNION-style exfiltration). No caller currently wires this to a web route, but the function itself is part of this PR's newly added public surface and is directly exploitable by any caller passing external input, matching the finding's hedged framing ('any caller... that forwards a sort value').",
+        "adjusted_severity": "critical"
+      }
+    }
+  ],
+  "rejected_findings": [],
+  "raw_finding_count": 3,
+  "merged_count": 1,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 2,
+      "seconds": 42.3,
+      "cost_usd": 0.10035140000000001
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 1,
+      "seconds": 11.2,
+      "cost_usd": 0.0285312
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 0,
+      "seconds": 55.2,
+      "cost_usd": 0.13235880000000003
+    },
+    {
+      "stage": "verifier",
+      "in": 1,
+      "confirmed": 1,
+      "seconds": 40.1
+    }
+  ],
+  "seconds": 95.3,
+  "cost_usd": 0.3524
+}

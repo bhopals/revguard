@@ -1,0 +1,58 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Bulk expense import</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Bulk expense import</h1>
+<div class="sub">Adds import_expenses() so users can migrate data from other apps. Takes a list of row dicts (as parsed from CSV/JSON uploads) and returns how many were imported, skipping rows that fail validation.</div>
+<span class="verdict" style="background:#e65100">Request changes — 3 confirmed finding(s), 0 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>1. CSV/JSON amount field passed to add_expense without parsing into integer cents</strong>
+  <div class="loc">ledgerly/expenses.py:75 &middot; correctness</div>
+  <div>import_expenses() takes row[&quot;amount_cents&quot;] straight from a CSV/JSON upload and forwards it verbatim to add_expense(), which just inserts it into the INTEGER amount_cents column with no type coercion or validation (expenses.py:24-28). Unlike every other amount in this codebase, this value never goes through utils.parse_money(), the function whose entire purpose is &#x27;Parse a user-supplied amount into integer cents&#x27; from formats like &#x27;12.50&#x27; or &#x27;$12.50&#x27; (utils.py:13-28). A CSV export from another app is very likely to contain a dollar amount as a string (e.g. &quot;12.50&quot;) rather than pre-computed integer cents; that string gets stored as-is (SQLite&#x27;s INTEGER affinity only coerces well-formed integer literals, not decimals like &#x27;12.50&#x27;, which are stored as REAL 12.5). This breaks the &#x27;amounts are always integer cents&#x27; invariant documented in db.py, and reports.format_money(cents) (utils.py:31-35) then does `cents % 100:02d}` on a float, raising ValueError the next time a user views monthly_summary/budget_status for that data — or, for values that parse as whole-number strings, silently importing an amount 100x smaller than intended (e.g. a row meaning $12.50 gets stored as 12 or 13 cents).</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read expenses.py: import_expenses() (lines 63-83) passes row[&#x27;amount_cents&#x27;] straight to add_expense() with no call to utils.parse_money, and add_expense() (lines 18-28) inserts it verbatim into the INTEGER amount_cents column with no coercion. Reproduced end-to-end: created an in-memory DB, called import_expenses(db, 1, [{&#x27;amount_cents&#x27;: &#x27;12.50&#x27;, ...}, {&#x27;amount_cents&#x27;: &#x27;13&#x27;, ...}]). Both rows imported successfully (count=2). SQLite stored &#x27;12.50&#x27; as REAL 12.5 (confirmed via typeof()), and stored &#x27;13&#x27; as INTEGER 13. Calling utils.format_money on the 12.5 row raised `ValueError: Unknown format </div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>2. New import_expenses() function has zero test coverage</strong>
+  <div class="loc">ledgerly/expenses.py:63 &middot; test-adequacy</div>
+  <div>The PR adds import_expenses(), a public function with nontrivial behavior (bulk insertion, per-row error swallowing via a bare `except Exception: pass`, silent skip counting), but no tests were added in tests/test_ledgerly.py (the only test file, which was not modified by this diff). There is no test verifying: (1) valid rows are actually imported and persisted, (2) invalid rows (bad category, bad date, missing keys) are skipped and counted correctly, (3) the returned count matches the number of successfully imported rows, or (4) rows are correctly scoped to user_id. Because the swallow-all exception handler can silently mask bugs (e.g. a KeyError from a malformed row, or a DB error), the absence of any test means a broken or overly permissive/overly strict implementation would not be caught by CI.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Grepped the entire repo for `import_expenses` usage; the only hit is the function definition in ledgerly/expenses.py itself (line 63), with zero references in tests/test_ledgerly.py or anywhere else. Read the full test file: TestExpenses class (lines 59-88) covers add/get/delete/ownership/bad-category/list-filter but has no test for import_expenses, bulk skip-counting, or error swallowing. Ran the existing suite (`pytest -q`) — 16 tests pass, none exercising the new function. This confirms the new public function with a bare `except Exception: pass` and count-based return value has no test cov</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>3. Blanket `except Exception: pass` hides programming and system errors, not just bad input</strong>
+  <div class="loc">ledgerly/expenses.py:81 &middot; robustness</div>
+  <div>The loop catches every exception type identically, including `KeyError`/`TypeError` from malformed row dicts, `sqlite3` errors from the DB layer, and any future bug in `add_expense`, indistinguishably from the intended `ExpenseError` validation failures. All of these are silently discarded with no logging, no per-row diagnostic, and no way for the caller to tell &#x27;row had a bad category&#x27; apart from &#x27;the database connection died mid-import&#x27; or &#x27;my code has a bug&#x27;. For a bulk-import feature meant to help users migrate data, returning only an opaque success count with zero information about which rows failed or why is a poor error-reporting contract and will make debugging failed imports (e.g. a systematic key-name mismatch causing every row to raise `KeyError`) very difficult — the function would report 0 imported with no indication of the actual cause.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/expenses.py:63-83, which matches the diff exactly. Executed a reproduction: called import_expenses with a row using a mismatched key name (&#x27;amt_cents&#x27; instead of &#x27;amount_cents&#x27;), which raises KeyError inside the loop; the blanket `except Exception: pass` swallows it and the function returns count=0 with no indication of the cause. Grepped the file for logging/error-collection and found none, confirming there is no way to distinguish validation failures (ExpenseError) from KeyError/TypeError/DB errors/bugs — all produce an identical silent skip and an opaque success count.</div>
+</div>
+<footer>Pipeline: reviewer_correctness (1) &rarr; reviewer_security (0) &rarr; reviewer_tests (1) &rarr; reviewer_nitpick (2) &rarr; verifier (3) &middot; 107.5s &middot;
+$0.53 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

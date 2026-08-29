@@ -1,0 +1,73 @@
+{
+  "case": "case04_token_refresh",
+  "system": "agent-v4",
+  "findings": [
+    {
+      "file": "ledgerly/auth.py",
+      "line": 70,
+      "category": "correctness",
+      "title": "UPDATE statement missing WHERE clause extends every session in the table",
+      "severity": "critical",
+      "description": "The UPDATE in refresh_token has no WHERE clause: `db.execute(\"UPDATE tokens SET expires_at = ?\", (...,))`. It sets expires_at on every row in the tokens table, not just the row for the token being refreshed. Concrete scenario: user A logs in and later has their token expire naturally; user B calls refresh_token with their own valid token. Because the UPDATE has no filter, user A's already-expired (or soon-to-expire) token row is also rewritten with a fresh expiry, silently reviving/extending sessions for every other logged-in user (or previously-expired-but-not-yet-purged rows) in the system. This should be `\"UPDATE tokens SET expires_at = ? WHERE token = ?\"` with the token bound as a second parameter.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/auth.py:65-73; refresh_token executes `db.execute(\"UPDATE tokens SET expires_at = ?\", (new_expiry,))` with no WHERE clause, so every row in the tokens table is updated regardless of which token was passed in. Reproduced via execution: registered alice and bob, logged both in, manually expired alice's token row, then called auth.refresh_token(db, token_b) for bob's token only. Querying the DB afterward showed alice's token row was also rewritten with a fresh ~24h expiry (from an expired '2026-08-29T13:03:56+00:00' to '2026-08-30T10:03:56', while current time was '2026-08-29T14:03:56'), i.e. alice's expired session was silently revived by an unrelated user's refresh call. The existing test_refresh_token only asserts the return value equals the input token and does not check scoping, so it doesn't catch this.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "tests/test_ledgerly.py",
+      "line": 60,
+      "category": "test-adequacy",
+      "title": "Test only checks trivial return value, never verifies the actual expiry side effect or token scoping",
+      "severity": "major",
+      "description": "test_refresh_token only asserts `auth.refresh_token(db, token) == token`. Looking at the implementation (ledgerly/auth.py:65-73), refresh_token unconditionally returns the same token it was given as long as authenticate() doesn't raise \u2014 so this assertion is guaranteed to pass regardless of whether the expiry was actually extended, or even whether the UPDATE statement is correct at all. The test never queries the tokens table to confirm expires_at was moved forward, and it uses only a single token in the database, so it cannot detect that the UPDATE statement in auth.py:70 has no WHERE clause and therefore blindly rewrites expires_at for every row in the tokens table (i.e., refreshing one user's token silently extends every other logged-in user's session too). A test that created two tokens (e.g., for two different users), called refresh_token on only one, and then asserted the other token's expiry was unchanged would have caught this; as written, the test provides no coverage of the feature's actual behavior.",
+      "reviewer": "tests",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/auth.py:65-73 confirming refresh_token calls authenticate() then executes `UPDATE tokens SET expires_at = ?` with no WHERE clause, always returning the input token regardless of the UPDATE's correctness. Read tests/test_ledgerly.py:60-62 confirming test_refresh_token only asserts `auth.refresh_token(db, token) == token` with a single token in the DB, never querying expires_at or using a second user's token. Reproduced live: created two users/tokens, called refresh_token on alice's token, and confirmed bob's token expires_at changed too (and lost its timezone suffix), demonstrating the cross-user session leak that the test cannot catch. Ran the actual test suite \u2014 test_refresh_token passes despite this bug, confirming zero coverage of the real behavior.",
+        "adjusted_severity": "major"
+      }
+    }
+  ],
+  "rejected_findings": [],
+  "raw_finding_count": 7,
+  "merged_count": 2,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 2,
+      "seconds": 29.3,
+      "cost_usd": 0.06192800000000001
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 1,
+      "seconds": 37.8,
+      "cost_usd": 0.0663698
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 1,
+      "seconds": 19.9,
+      "cost_usd": 0.045482400000000006
+    },
+    {
+      "stage": "reviewer_nitpick",
+      "findings": 3,
+      "seconds": 44.8,
+      "cost_usd": 0.0798104
+    },
+    {
+      "stage": "verifier",
+      "in": 2,
+      "confirmed": 2,
+      "seconds": 38.7
+    }
+  ],
+  "seconds": 83.5,
+  "cost_usd": 0.3864
+}

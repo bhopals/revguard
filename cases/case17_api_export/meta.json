@@ -29,6 +29,14 @@
       "category": "correctness",
       "severity": "major",
       "description": "POST /household/expenses converts the amount via float, losing cents ('19.99' -> 1998) and accepting junk like '1e3' or negatives, while POST /expenses five routes up uses parse_money. Inconsistent and wrong for money."
+    },
+    {
+      "id": "c17-d4",
+      "file": "tests/test_api.py",
+      "anchor": "def test_balances_for_own_household(self, db, user, bob, token):",
+      "category": "test-adequacy",
+      "severity": "major",
+      "description": "test_balances_for_own_household implies household scoping is verified but never exercises a non-member request, hiding the missing require_member check in the endpoint. Promoted in adjudication round 2: flagged independently by two systems."
     }
   ]
 }

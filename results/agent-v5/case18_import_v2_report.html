@@ -1,0 +1,65 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Importer v2: category mapping and atomic batches</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Importer v2: category mapping and atomic batches</h1>
+<div class="sub">Statement import learns two things users kept asking for: map merchant descriptions to categories (case-insensitive prefix rules, e.g. &#x27;COFFEE&#x27; -&gt; food), and all-or-nothing batches so a bad row no longer leaves a half-imported statement. Duplicate detection was also simplified and sped up by keying on (date, amount).</div>
+<span class="verdict" style="background:#c62828">Request changes — 4 confirmed finding(s), 2 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. Atomic batch promise broken: add_expense commits each row individually inside the outer transaction</strong>
+  <div class="loc">ledgerly/importers.py:112 &middot; correctness</div>
+  <div>import_statement wraps the row loop in `with db.transaction():` to fulfil its docstring promise that &quot;the whole batch succeeds or fails together&quot;. However, each row is inserted via add_expense (ledgerly/expenses.py:24), which calls `db.execute(...)` (ledgerly/db.py:126). db.execute itself opens its own `with self.transaction():` block and calls `self.conn.commit()` immediately after the INSERT succeeds (ledgerly/db.py:109-116). Because sqlite3&#x27;s implicit transaction is connection-wide (not a real nested/savepoint transaction), this inner commit() commits everything pending on the connection right after each expense insert, not at the end of the outer `with db.transaction():` block. Concrete failure: import_statement(db, user, STATEMENT, category_map={&quot;COFFEE&quot;: &quot;food&quot;, &quot;GROCER&quot;: &quot;badcat&quot;}) processes COFFEE CO first -&gt; add_expense succeeds and is committed immediately by the inner transaction. On the next row, category_for raises ImportError_ because &quot;badcat&quot; is not in VALID_CATEGORIES. The exception propagates to the outer `with db.transaction()`, which calls self.conn.rollback() -- but there is nothing left to roll back for the COFFEE CO row since it was already committed. The result is a half-imported statement (one expense persisted, no import_batches row created, exception raised to the caller), exactly the scenario the docstring and PR description claim is now prevented.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/db.py: Database.execute() wraps its INSERT in its own `with self.transaction()` block which calls self.conn.commit() unconditionally on success (lines 109-129). add_expense (expenses.py:24) calls db.execute for the INSERT. import_statement (importers.py:99-120) wraps the row loop in an outer `with db.transaction():` but each add_expense call triggers its own inner commit via db.execute, since sqlite3 transactions are connection-wide there&#x27;s no real nesting/savepoint. Reproduced directly: ran import_statement with STATEMENT containing COFFEE CO (valid mapping) then GROCER LTD (map</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>2. TestAtomicity.test_atomic_batch never exercises a failure/rollback path</strong>
+  <div class="loc">tests/test_importers.py:68 &middot; test-adequacy</div>
+  <div>This test only runs import_statement with a fully valid statement and asserts the same happy-path outcome already covered by TestImport.test_import_and_reimport / test_batch_recorded (lines 38-50). It contains no row that fails partway through the batch, so it cannot detect whether the new `with db.transaction()` wrapper actually rolls back previously-inserted rows on a later failure. In fact, db.execute() (used inside add_expense, ledgerly/db.py:126-129) opens and commits its own nested transaction for every row, so each row is committed to disk as soon as it&#x27;s inserted regardless of the outer transaction in import_statement — the &#x27;atomic batch&#x27; feature the PR advertises does not actually prevent partial imports. Because this test never introduces a mid-batch failure (e.g. a row with an invalid category via category_map, or a bad note length) and then checks that expenses/import_batches have zero rows, it would pass identically whether atomicity is implemented correctly, implemented incorrectly, or not implemented at all — it cannot fail for the very behavior it is named after.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/db.py: db.execute() wraps each call in its own `with db.transaction()`, which calls self.conn.commit() on success. Since sqlite3 has one real connection-level transaction (no savepoints/nesting used here), this inner commit inside add_expense (called per-row from import_statement) permanently commits to disk regardless of the outer `with db.transaction()` in import_statement. Reproduced directly: ran import_statement with a category_map that fails on the 4th/last row (STREAM-&gt;&#x27;yachts&#x27;, an invalid category) after 2 rows (COFFEE, GROCER) were already processed. The call raised Impo</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>3. Duplicate key (date, amount) causes false-positive duplicate detection, silently dropping legitimate rows</strong>
+  <div class="loc">ledgerly/importers.py:90 &middot; correctness</div>
+  <div>_is_duplicate now matches solely on (user_id, spent_on, amount_cents), dropping the previous description/note comparison. Within a single statement (or across statements), two distinct, legitimate transactions that happen to share the same date and amount but have different descriptions (e.g. two unrelated $9.99 charges on the same day to different merchants) will be treated as duplicates: the second is silently counted as `skipped` and never inserted, even though it is not actually a duplicate of the first. This is a real data-loss regression versus the old (date, amount, note) key, and the existing test fixture (STATEMENT) has no two rows sharing date+amount, so this false-positive skip path is not exercised by the test suite.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/importers.py: _is_duplicate (line 90-96) now queries only on (user_id, spent_on, amount_cents), dropping the prior note/description comparison. Reproduced with the real Database/auth/importers modules: importing a CSV with two distinct legitimate transactions sharing date+amount but different descriptions (&#x27;Merchant A&#x27; and &#x27;Merchant B&#x27;, both -9.99 on 2026-03-01) yields imported=1, skipped=1, and only &#x27;Merchant A&#x27; ends up in the expenses table — &#x27;Merchant B&#x27; is silently dropped as a false-positive duplicate. Confirmed the existing STATEMENT fixture in tests/test_importers.py has n</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>4. category_for is not actually case-insensitive with respect to the mapping keys</strong>
+  <div class="loc">ledgerly/importers.py:82 &middot; correctness</div>
+  <div>The module docstring and category_for&#x27;s own docstring both promise &#x27;case-insensitive prefix rules&#x27;, but the implementation only upper-cases the description (`desc.upper().startswith(prefix)`) and never normalizes `prefix`. If a caller supplies a category_map with a lower- or mixed-case key, e.g. {&quot;coffee&quot;: &quot;food&quot;}, and a description &quot;COFFEE CO&quot;, then &quot;COFFEE CO&quot;.startswith(&quot;coffee&quot;) is False (case mismatch), so the row silently falls through to DEFAULT_CATEGORY (&quot;other&quot;) instead of being categorized as &quot;food&quot;. This contradicts the documented case-insensitive behavior and will silently miscategorize transactions whenever a caller&#x27;s mapping keys are not already all-uppercase.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/importers.py:82-90 category_for(); confirmed via python3 -c that &#x27;COFFEE CO&#x27;.upper().startswith(&#x27;coffee&#x27;) is False while startswith(&#x27;coffee&#x27;.upper()) is True. Only `desc` is uppercased, `prefix` (the mapping key) never is, so a mixed/lower-case category_map key fails to match an all-caps description and silently falls through to DEFAULT_CATEGORY (&#x27;other&#x27;). This directly contradicts the module docstring (&#x27;category mapping: case-insensitive prefix rules&#x27;) and category_for&#x27;s own docstring. The PR&#x27;s new test (TestCategoryMapping.test_prefix_mapping) only uses already-uppercase keys (</div>
+</div>
+<footer>Pipeline: reviewer_correctness (3) &rarr; reviewer_security (0) &rarr; reviewer_tests (2) &rarr; verifier (4) &middot; 194.7s &middot;
+$1.09 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

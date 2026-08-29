@@ -1,0 +1,65 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Configurable page size for expense listing</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Configurable page size for expense listing</h1>
+<div class="sub">Lets API callers choose a page size when listing expenses and adds a page_count helper so clients can render pagination controls.</div>
+<span class="verdict" style="background:#e65100">Request changes — 4 confirmed finding(s), 0 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>1. page_count off-by-one when total is an exact multiple of page_size</strong>
+  <div class="loc">ledgerly/expenses.py:62 &middot; correctness</div>
+  <div>`page_count` computes `total // page_size + 1`, which always adds an extra page even when `total` divides evenly by `page_size`. E.g. total=40, page_size=20 (two full pages) returns 3 instead of 2; total=0 returns 1 instead of 0. Clients using this helper to render &#x27;Page X of N&#x27; pagination controls will show a phantom last page that, when requested via `list_expenses`, returns an empty result set. The correct formula is `-(-total // page_size)` or `(total + page_size - 1) // page_size` for total&gt;0, with 0 handled specially. This is a new function introduced by this PR with no boundary-case test coverage.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/expenses.py:60-62, confirming page_count(total, page_size) = total // page_size + 1. Executed it directly: page_count(40,20) -&gt; 3 (should be 2), page_count(0,20) -&gt; 1 (should be 0), page_count(20,20) -&gt; 2 (should be 1). Grepped the repo for other usages/tests of page_count and found none, confirming it&#x27;s untested. The off-by-one is real and reachable exactly as described.</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>2. Unvalidated page_size lets callers bypass pagination limit entirely</strong>
+  <div class="loc">ledgerly/expenses.py:75 &middot; security</div>
+  <div>list_expenses() (line 65) accepts a caller-supplied page_size with no bounds checking, unlike the page parameter which is validated (line 67-68). If a caller passes page_size=0 or a negative value, it is placed directly into the SQL LIMIT clause (line 75). SQLite treats a negative LIMIT as &#x27;no limit&#x27; (LIMIT -1 returns all matching rows), so a caller invoking list_expenses(db, user_id, page_size=-1) gets every expense row for that user in a single query, completely defeating the pagination the PR is meant to enforce. There is also no upper bound, so a caller can request an arbitrarily large page_size (e.g. 10**9) to force the DB to materialize and return the user&#x27;s entire expense history in one call. Since the PR description states this page_size is meant to be caller/API-controlled, an API endpoint built on this function would let any authenticated user force unbounded result sets, which can be used for resource-exhaustion (memory/CPU/DB load) against the service. Fix by validating 1 &lt;= page_size &lt;= some MAX_PAGE_SIZE before building the query.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/expenses.py: list_expenses (line 65-76) validates `page &lt; 1` but never validates `page_size`, which flows straight into the SQL LIMIT clause built with plain sqlite3 (ledgerly/db.py). Reproduced with a live in-memory DB seeded with 50 rows: list_expenses(db,1) with default page_size=20 returns 20 rows; list_expenses(db,1,page_size=-1) returns all 50 rows (confirms SQLite&#x27;s LIMIT -1 = unlimited, bypassing pagination); list_expenses(db,1,page_size=10**9) also returns the full set with no clamping. Grep confirms no MAX_PAGE_SIZE/upper-bound check exists anywhere in the module. Core </div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>3. No tests added for count_expenses, page_count, or the new page_size parameter</strong>
+  <div class="loc">tests/test_ledgerly.py:108 &middot; test-adequacy</div>
+  <div>The PR adds three new/changed pieces of public behavior in ledgerly/expenses.py — count_expenses() (line 50), page_count() (line 60), and the new page_size parameter on list_expenses() (line 65) — but tests/test_ledgerly.py has no new test cases for any of them (TestExpenses still ends at test_list_filters_by_category, line 82-86, unchanged). This leaves an off-by-one defect in page_count undetected: page_count(20, page_size=20) returns 2 (should be 1) and page_count(0) returns 1 (should be 0), because `total // page_size + 1` always adds one page even when total is an exact multiple of page_size or zero. A single test asserting page_count(0) == 0 or page_count(page_size, page_size) == 1 would have caught this before merge, but no such test exists.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/expenses.py: page_count(total, page_size) = total // page_size + 1. Executed python3: page_count(20, page_size=20) returns 2 (should be 1) and page_count(0) returns 1 (should be 0), confirming the off-by-one bug exactly as described. Grepped tests/test_ledgerly.py for &#x27;count_expenses|page_count|page_size&#x27; — zero matches, confirming no tests exist for any of the new public functions/parameter added in this PR.</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#8d6e63">MINOR</span>
+  <strong>4. No tests added for the new public functions</strong>
+  <div class="loc">ledgerly/expenses.py:50 &middot; test-adequacy</div>
+  <div>This PR adds `count_expenses`, `page_count`, and a new `page_size` parameter on `list_expenses`, but tests/test_ledgerly.py has no new test cases exercising any of them (only the pre-existing category-filter test remains). The off-by-one bug in `page_count` and the missing page_size validation would both have been caught by even minimal coverage (e.g. total that&#x27;s an exact multiple of page_size, or page_size=0).</div>
+  <div class="ev"><b>Verified (high confidence):</b> Grepped tests/test_ledgerly.py for count_expenses/page_count/page_size — zero matches, confirming no new tests were added for the three new public API surfaces. Executed the code: page_count(20, 20) returns 2 instead of the correct 1 (off-by-one when total is an exact multiple of page_size), and page_count(0, 20) returns 1 instead of 0. Also confirmed list_expenses has no page_size validation (unlike its `page &lt; 1` check) — page_size=0 passes through silently to &#x27;LIMIT 0 OFFSET 0&#x27; rather than raising ExpenseError. Both bugs are real and reachable, and are exactly the kind minimal test coverage</div>
+</div>
+<footer>Pipeline: reviewer_correctness (1) &rarr; reviewer_security (1) &rarr; reviewer_tests (1) &rarr; reviewer_nitpick (3) &rarr; verifier (4) &middot; 180.4s &middot;
+$0.48 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

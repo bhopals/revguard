@@ -1,0 +1,73 @@
+{
+  "case": "case13_cli",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/cli.py",
+      "line": 123,
+      "category": "correctness",
+      "severity": "major",
+      "title": "CLI always exits 0, even on error",
+      "description": "main() catches every exception, prints \"error: ...\", and then falls through to `return 0`. Every invocation of the CLI therefore reports success to the shell regardless of whether the command actually failed (auth failure, bad input, DB error, etc.). Any script or CI job that checks the exit code (e.g. `ledgerly add ... && echo done`) cannot detect failures."
+    },
+    {
+      "file": "ledgerly/cli.py",
+      "line": 91,
+      "category": "security",
+      "severity": "major",
+      "title": "Password accepted as a positional command-line argument",
+      "description": "`register` and `login` take the password as a plain argv argument (lines 90-91, 95-96). On most systems this is visible to any other local user via `ps`/`/proc/<pid>/cmdline` while the process runs, and is also written verbatim into the shell history file (e.g. ~/.zsh_history), leaking credentials. Passwords should be read from a prompt (e.g. via getpass) or an environment variable/file instead."
+    },
+    {
+      "file": "ledgerly/cli.py",
+      "line": 32,
+      "category": "security",
+      "severity": "minor",
+      "title": "Token file briefly created with default (non-restrictive) permissions",
+      "description": "`_save_token` calls `TOKEN_PATH.write_text(token)` before `chmod(0o600)`. The file is created using the process umask (often 644/664), so for a short window \u2014 and permanently if the process is killed or errors between the two calls \u2014 the auth token is readable by other local users. The file should be opened with restrictive permissions from the start (e.g. os.open with mode 0o600) rather than chmod'd after the fact."
+    },
+    {
+      "file": "ledgerly/cli.py",
+      "line": 56,
+      "category": "correctness",
+      "severity": "major",
+      "title": "Floating point arithmetic used to compute money in cents",
+      "description": "`amount_cents = int(float(args.amount) * 100)` converts the amount via a binary float and truncates (rather than rounds). Many decimal amounts are not exactly representable in binary floating point (e.g. `2.35 * 100 == 234.99999999999997`), so `int(...)` truncates to 234 cents instead of 235 \u2014 silently recording the wrong amount for an expense tracker. This should parse the amount as a Decimal/string and round, not truncate a float."
+    },
+    {
+      "file": "ledgerly/cli.py",
+      "line": 56,
+      "category": "robustness",
+      "severity": "minor",
+      "title": "No validation of expense amount",
+      "description": "The `amount` argument is converted with `float()`/`int()` but never checked for being positive/non-zero or finite. A user can pass a negative, zero, `nan`, or `inf` value and it will be silently recorded as an expense, corrupting later summaries/reports."
+    },
+    {
+      "file": "ledgerly/cli.py",
+      "line": 120,
+      "category": "robustness",
+      "severity": "minor",
+      "title": "Database open is outside the error-handling try/finally",
+      "description": "`db = Database(DB_PATH)` on line 120 happens before the `try` block. If opening the database fails (permission error, corrupt file, disk full, missing directory for LEDGERLY_DB, etc.) the exception propagates as a raw, unhandled traceback instead of the friendly `error: ...` message every other failure path produces, and `db.close()` is never reached for any partially-opened resources."
+    },
+    {
+      "file": "ledgerly/cli.py",
+      "line": 40,
+      "category": "security",
+      "severity": "major",
+      "title": "Cached auth token is not bound to the target database",
+      "description": "TOKEN_PATH is a single fixed file (`~/.ledgerly_token`) independent of DB_PATH, which is configurable via the LEDGERLY_DB environment variable. If a user logs in against one database and then runs a later command (add/list/summary) with LEDGERLY_DB pointing at a different database file, `_require_user` will pass the same cached token into `auth.authenticate(db, token)` against the new database. Depending on how tokens/user ids are represented, this can authenticate the caller as an unrelated (possibly attacker-controlled) user id in the other database, exposing or corrupting another account's expense data."
+    },
+    {
+      "file": "ledgerly/cli.py",
+      "line": 1,
+      "category": "test-adequacy",
+      "severity": "major",
+      "title": "No tests added for the new CLI module",
+      "description": "This PR introduces a full CLI (register/login/add/list/summary, token caching, arg parsing) but adds no automated tests. There is no coverage for argument parsing, token save/load, the not-logged-in error path, or the always-exit-0 behavior, so regressions in any of these commands would not be caught."
+    }
+  ],
+  "seconds": 81.0,
+  "cost_usd": 0.09722080000000001,
+  "num_turns": 1
+}

@@ -1,0 +1,118 @@
+{
+  "case": "case20_recurring_v2",
+  "system": "agent-v4",
+  "findings": [
+    {
+      "file": "ledgerly/recurring.py",
+      "line": 106,
+      "category": "correctness",
+      "title": "Biweekly cadence fires every week, not every second week",
+      "severity": "critical",
+      "description": "The `biweekly` branch of occurrences_between (lines 106-111) is logically identical to the `weekly` branch: it appends every date in (start, end] whose weekday matches rule['weekday'], with no tracking of week parity relative to any anchor date. There is also no column in recurring_rules (see ledgerly/db.py CREATE TABLE recurring_rules) to store a rule creation/anchor date that would let the code determine 'every second week'. As a result, a rule created with cadence='biweekly' materializes an expense every single week \u2014 double the intended frequency \u2014 silently overcharging the user's tracked spending. The included test (test_biweekly_occurrence) only checks an 8-day window containing exactly one matching Monday, so it can't distinguish weekly-every-week behavior from true biweekly behavior and passes despite the bug.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/recurring.py lines 100-111: the biweekly branch is logically identical to the weekly branch (same loop, same weekday check, no parity/anchor tracking, only a misleading comment differs). Confirmed via execution: occurrences_between({'cadence':'biweekly','weekday':0}, date(2026,3,2), date(2026,4,13)) returned all 6 Mondays in the 6-week window instead of 3, proving it fires every week. Also checked ledgerly/db.py CREATE TABLE recurring_rules schema \u2014 there is no anchor/creation-date column anywhere, so no mechanism exists to compute week parity for true biweekly cadence. Ran the included test_biweekly_occurrence test: it passes only because its 8-day window contains just one Monday, so it cannot distinguish weekly-every-week behavior from true biweekly.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "ledgerly/recurring.py",
+      "line": 63,
+      "category": "correctness",
+      "title": "resume_rule contradicts its own docstring by backdating charges accrued during the pause",
+      "severity": "major",
+      "description": "resume_rule's docstring (line 64) promises 'charging resumes from now', but the implementation (lines 65-68) only sets active=1 and never touches last_materialized. Since materialize_due (line 121-124) only queries active=1 rules and only advances last_materialized for rules it processes, a paused rule's last_materialized stays frozen at whatever it was before pause_rule was called. Concretely: create a monthly rule that materializes on 2026-03-06 (last_materialized='2026-03-06'), pause it, leave it paused through April and May, then resume_rule on 2026-06-01. The next materialize_due call computes occurrences_between(rule, start=2026-03-06, end=today) and will create backdated expenses for every monthly/weekly occurrence that fell inside the paused window (e.g. Apr 5, May 5), even though the rule was suspended the whole time. This directly contradicts the documented 'resumes from now' guarantee and produces surprise historical charges. Neither test_resume_reactivates nor any other test covers a pause/resume cycle spanning more than one materialization period, so this gap isn't caught.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/recurring.py: resume_rule (lines 63-68) only sets active=1 and never updates last_materialized; materialize_due (115-141) queries only active=1 rules and computes start from the frozen last_materialized. Reproduced live: created a monthly rule (day_of_month=5), materialized on 2026-03-06 (1 expense, spent_on=2026-03-05), called pause_rule then immediately resume_rule (simulating a pause spanning Apr/May), then materialize_due(today=2026-06-01) returned 2 and inserted expenses dated 2026-04-05 and 2026-05-05 into the expenses table \u2014 backdated charges for occurrences that fell entirely within the paused window, directly contradicting resume_rule's 'charging resumes from now' docstring.",
+        "adjusted_severity": "major"
+      }
+    },
+    {
+      "file": "tests/test_recurring.py",
+      "line": 68,
+      "category": "test-adequacy",
+      "title": "Biweekly occurrence test cannot detect that the cadence fires every week instead of every second week",
+      "description": "occurrences_between()'s biweekly branch (ledgerly/recurring.py:106-111) is byte-for-byte identical to the weekly branch: it matches every date whose weekday equals rule['weekday'], with no logic to skip alternate weeks. The only test for this, test_biweekly_occurrence, uses a date range of just 9 days (2026-03-02 to 2026-03-10), which contains exactly one Monday (2026-03-09) regardless of whether the cadence is weekly or biweekly. So the test passes identically whether or not the 'every second week' behavior is implemented, and gives false confidence that the biweekly feature works. A range spanning 3+ weeks (e.g. 2026-03-02 to 2026-03-23, which has Mondays on 3/9, 3/16, 3/23) would show the real bug: it should return only [3/9, 3/23] for true biweekly but the current code returns [3/9, 3/16, 3/23]. As shipped, any user creating a 'biweekly' rule will actually be charged every week, and no test catches it.",
+      "reviewer": "tests",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/recurring.py:97-110: the biweekly branch is logically identical to the weekly branch (same loop, same `d.weekday() == rule['weekday']` check, no anchor-date or week-parity logic to skip alternate weeks). Ran `occurrences_between({'cadence':'biweekly','weekday':0}, 2026-03-02, 2026-03-23)` and got `[2026-03-09, 2026-03-16, 2026-03-23]` \u2014 every Monday, not every second one \u2014 proving the biweekly cadence fires weekly. The shipped test `test_biweekly_occurrence` only spans 2026-03-02 to 2026-03-10 (one Monday), so it passes regardless; ran `pytest -k biweekly` and confirmed both tests pass despite the bug. Grepped the whole file for any parity/skip logic and found none.",
+        "adjusted_severity": "major"
+      },
+      "severity": "major"
+    },
+    {
+      "file": "ledgerly/recurring.py",
+      "line": 55,
+      "category": "correctness",
+      "title": "pause_rule duplicates deactivate_rule instead of reusing it, and neither is updated to know about the other",
+      "description": "`pause_rule` (lines 55-60) has an identical body to the pre-existing `deactivate_rule` (lines 43-52): both set `active = 0` after an ownership check. `deactivate_rule` still inlines its own SELECT/ownership check instead of being refactored to use the new `_own_rule` helper, so the same 5-line ownership check now exists in two places (43-49 and 71-77) that can silently drift apart. The PR should have either made `deactivate_rule` an alias for `pause_rule` (or vice versa) or removed one entirely; keeping both as separate, functionally-identical public entry points is confusing for callers deciding which one to use, and doubles the maintenance surface for what is one operation.",
+      "reviewer": "nitpick",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/recurring.py directly. deactivate_rule (lines 43-52) inlines a SELECT/ownership check identical to the new _own_rule helper (lines 71-78) instead of calling it, and pause_rule (lines 55-60) is functionally identical to deactivate_rule (ownership check + `active = 0` update) but does call _own_rule. Grep confirms both are used as separate public functions in tests/test_recurring.py with no aliasing or deduplication between them, so the same ownership-check logic exists in two places (43-49 and 71-77) and two near-duplicate deactivation entry points exist. This is a real, verifiable code-duplication/maintainability issue, though it's cosmetic \u2014 no functional bug or security impact.",
+        "adjusted_severity": "minor"
+      },
+      "severity": "minor"
+    }
+  ],
+  "rejected_findings": [
+    {
+      "file": "ledgerly/recurring.py",
+      "line": 71,
+      "category": "correctness",
+      "title": "_own_rule is a poor, misleading name for a validation/lookup helper",
+      "description": "`_own_rule(db, user_id, rule_id)` performs an ownership check and returns the row, but its name reads as a verb phrase (\"own rule\") that doesn't communicate that it validates and returns data, or that it raises on failure. Both call sites (`pause_rule` line 57, `resume_rule` line 65) discard the returned row, so the return value is dead. A name like `_get_owned_rule` or `_require_owned_rule` would make the raise-on-missing contract and the (unused) return clear to future maintainers.",
+      "reviewer": "nitpick",
+      "verification": {
+        "verdict": "REJECTED",
+        "confidence": "high",
+        "evidence": "The finding is a naming/style nitpick, not a functional correctness defect. Read ledgerly/recurring.py: _own_rule does correctly perform the ownership check and raise RecurringError on missing/foreign rows, and both call sites (pause_rule, resume_rule) correctly discard the return value since they only need the validation side-effect. This behaves exactly as intended; there is no bug, no incorrect output, and no reachable failure scenario. The complaint is purely about naming clarity ('_own_rule' vs '_get_owned_rule'), which is subjective/stylistic and matches the review category mislabeling (filed as 'correctness' but is actually a naming nitpick with no functional impact).",
+        "adjusted_severity": "minor"
+      }
+    }
+  ],
+  "raw_finding_count": 7,
+  "merged_count": 5,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 2,
+      "seconds": 46.5,
+      "cost_usd": 0.1047566
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 0,
+      "seconds": 26.9,
+      "cost_usd": 0.0895018
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 1,
+      "seconds": 34.9,
+      "cost_usd": 0.07662440000000001
+    },
+    {
+      "stage": "reviewer_nitpick",
+      "findings": 4,
+      "seconds": 32.5,
+      "cost_usd": 0.070406
+    },
+    {
+      "stage": "verifier",
+      "in": 5,
+      "confirmed": 4,
+      "seconds": 29.1
+    }
+  ],
+  "seconds": 75.6,
+  "cost_usd": 0.6202
+}

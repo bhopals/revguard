@@ -1,0 +1,65 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Notifications API + weekly digest job</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Notifications API + weekly digest job</h1>
+<div class="sub">Exposes notifications over the API (list unread, mark read) and adds send_weekly_digests(), the scheduled job that mails every user a spending digest for the month and tidies up their notification list.</div>
+<span class="verdict" style="background:#c62828">Request changes — 4 confirmed finding(s), 2 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. Weekly digest is marked read before the user ever sees it</strong>
+  <div class="loc">ledgerly/notify.py:92 &middot; correctness</div>
+  <div>send_weekly_digests() inserts the new digest notification via notify(db, uid, &quot;digest&quot;, body) at line 92, then immediately runs `UPDATE notifications SET read_at = ? WHERE user_id = ?` (lines 93-96) with no upper bound on created_at or exclusion of the just-inserted row. Since the UPDATE filters only by user_id, it also marks the digest notification that was just created as read. As a result, notify.unread(db, uid) and the new GET /notifications endpoint will never show the weekly digest as unread — the very notification the job exists to deliver disappears immediately. This contradicts the function&#x27;s own docstring (&#x27;Queue a spending digest for every user&#x27;) and the PR description (&#x27;mails every user a spending digest&#x27;); the digest is queued but instantly consumed. The accompanying test (tests/test_notify.py test_digest_queued_per_user) masks this: `assert any(...) or True` is a tautology, and `bodies.count(&quot;digest&quot;) &lt;= 1` passes trivially because the count is always 0.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/notify.py: send_weekly_digests() inserts a digest via notify() then runs `UPDATE notifications SET read_at = ? WHERE user_id = ?` unconditionally (no created_at bound, no exclusion of the new row id). Reproduced directly: after calling send_weekly_digests(db, &#x27;2026-03&#x27;) for two users, notify.unread(db, uid) returns [] for both, and querying all rows shows read_at is set on the just-inserted digest rows immediately. Also ran tests/test_notify.py — all 8 tests pass, confirming test_digest_queued_per_user is tautological (`assert ... or True` and `bodies.count(&#x27;digest&#x27;) &lt;= 1` trivia</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>2. IDOR: GET /notifications lets a caller read any other user&#x27;s notifications</strong>
+  <div class="loc">ledgerly/api.py:146 &middot; security</div>
+  <div>get_notifications resolves the target user id from a caller-controlled request parameter (`request.params.get(&quot;user_id&quot;, request.user_id)`) instead of always using the authenticated `request.user_id`, unlike every other route in this file (e.g. get_expenses, get_summary, get_budgets all use request.user_id exclusively). Any authenticated user can call `GET /notifications?user_id=&lt;victim_id&gt;` with their own valid bearer token and receive the victim&#x27;s unread notifications (which include over-budget alerts and digest bodies revealing spending amounts/categories), bypassing per-user authorization entirely.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/api.py:144-147 confirming get_notifications resolves uid via request.params.get(&#x27;user_id&#x27;, request.user_id) instead of always using request.user_id (unlike get_expenses/get_summary/get_budgets which use request.user_id exclusively). Wrote and ran a live reproduction: registered alice and bob, added a sensitive notification for bob via notify.notify(), logged in as alice only, then called api.handle() on GET /notifications with alice&#x27;s own bearer token but params={&#x27;user_id&#x27;: bob_id}. Result: HTTP 200 with bob&#x27;s private notification body (&#x27;Bob secret: overspent $500 on Gambling&#x27;) r</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>3. POST /notifications/read updates by id only, dropping the ownership scoping mark_read() already enforces</strong>
+  <div class="loc">ledgerly/api.py:153 &middot; correctness</div>
+  <div>post_notification_read builds its own SQL — `UPDATE notifications SET read_at = ? WHERE id = ?` — instead of calling notify.mark_read(db, request.user_id, notification_id), which scopes the update with `WHERE id = ? AND user_id = ? AND read_at IS NULL` (ledgerly/notify.py:29-34). The new handler has no user_id filter at all, so any authenticated caller can mark any other user&#x27;s notification as read by guessing/enumerating notification_id, and the endpoint also silently &#x27;succeeds&#x27; (200 {ok: true}) for a notification_id belonging to another user or one that does not exist, giving no error signal where the existing mark_read semantics (scoped, no-op-safe) would have prevented cross-user mutation. This is a regression from the ownership guarantee the pre-existing mark_read() enforces and that TestNotifications.test_mark_read_scoped_to_user in tests/test_notify.py already verifies for the library function but the new API path bypasses entirely.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/api.py:151-159 and ledgerly/notify.py:29-34, confirming post_notification_read issues raw SQL `UPDATE notifications SET read_at = ? WHERE id = ?` with no user_id clause, while notify.mark_read() scopes with `WHERE id = ? AND user_id = ? AND read_at IS NULL`. Reproduced live: registered alice and bob, inserted a notification for bob, then called api.post_notification_read with request.user_id=alice and notification_id=bob&#x27;s notification. The call returned 200 {&#x27;ok&#x27;: True} and bob&#x27;s notification was marked read (unread list went from 1 entry to empty) despite the request being auth</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>4. Tautological assertion masks that digests are never left unread</strong>
+  <div class="loc">tests/test_notify.py:50 &middot; test-adequacy</div>
+  <div>The assertion `assert any(n[&quot;kind&quot;] == &quot;digest&quot; for n in unread(db, user)) or True` is a tautology: the trailing `or True` makes it pass regardless of the left-hand expression&#x27;s value, so this line can never fail no matter what `send_weekly_digests` does. This is not incidental: `send_weekly_digests` (ledgerly/notify.py:82-98) inserts the digest notification via `notify(...)` and then immediately runs `UPDATE notifications SET read_at = ? WHERE user_id = ?` for that same user with no `read_at IS NULL` guard, which marks the digest it just created as read in the same loop iteration. So `unread(db, user)` returns an empty list right after `send_weekly_digests` runs, and the real (un-neutered) check `any(n[&quot;kind&quot;] == &quot;digest&quot; for n in unread(db, user))` would evaluate to False and fail. The `or True` was added to force the test green instead of fixing/asserting on this behavior, so the test&#x27;s name (`test_digest_queued_per_user`) and the function&#x27;s docstring promise (&quot;Queue a spending digest for every user&quot;) are not actually verified — the digest is queued and then immediately swallowed by the read-pile cleanup, and no test in this PR would catch a regression (or the existing bug) in that interaction.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/notify.py: send_weekly_digests inserts a digest notification then runs UPDATE notifications SET read_at = ? WHERE user_id = ? with no read_at IS NULL guard, immediately marking it read. Reproduced live: after send_weekly_digests(db, &#x27;2026-03&#x27;), unread(db, user) returns [] and the real check `any(n[&#x27;kind&#x27;]==&#x27;digest&#x27; for n in unread(db,user))` evaluates False. The test&#x27;s actual assertion is neutered by `or True`, and `python3 -m pytest tests/test_notify.py -v` shows all 8 tests including test_digest_queued_per_user pass despite this being false — confirming the tautology masks a ge</div>
+</div>
+<footer>Pipeline: reviewer_correctness (2) &rarr; reviewer_security (2) &rarr; reviewer_tests (1) &rarr; verifier (4) &middot; 106.5s &middot;
+$0.52 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

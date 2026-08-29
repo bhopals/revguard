@@ -1,0 +1,82 @@
+{
+  "case": "case15_summary_cache",
+  "system": "agent-v5",
+  "findings": [
+    {
+      "file": "ledgerly/reports.py",
+      "line": 32,
+      "category": "correctness",
+      "title": "Cache is never invalidated when expenses/budgets change, returning stale monthly totals",
+      "severity": "critical",
+      "description": "monthly_summary caches results in the module-level _summary_cache keyed by (user_id, month) but nothing clears or updates that entry when the underlying data changes: add_expense, delete_expense (ledgerly/expenses.py) and set_budget (ledgerly/reports.py:10) never touch _summary_cache. Concrete scenario: the dashboard calls monthly_summary(db, user, '2026-05') once (e.g. before any expenses exist, caching {}); the user then adds an expense for May via add_expense; the dashboard reloads and calls monthly_summary(db, user, '2026-05') again \u2014 because the key is already cached, the new expense is silently omitted from the totals returned, and any budget_status() call for that month (reports.py:52) will also report the wrong 'spent'/'remaining'/'over_budget' values. This directly contradicts the docstring's premise that the cache exists because 'numbers rarely change within a session' \u2014 no invalidation path is provided for when they do change, so any edit produces permanently wrong cached output for the rest of the process lifetime.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/reports.py and expenses.py: _summary_cache is a module-level dict written to on every monthly_summary call, and grep confirms no other code (set_budget, add_expense, delete_expense) ever touches _summary_cache. Reproduced live: called monthly_summary(db, user, '2026-05') before any expenses (cached {}), then added an expense via add_expense for that same month, then called monthly_summary again in the same process \u2014 output was still {} instead of reflecting the new $10.00 food expense, proving the stale-cache bug is real and reachable. The PR's own added test (test_summary_cache_consistent) only calls monthly_summary twice with no mutation in between, so the full suite (17 passed) does not catch this. This is a genuine functional defect in cache invalidation, not a test-coverage complaint.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 22,
+      "category": "security",
+      "severity": "major",
+      "title": "Process-global cache keyed only by (user_id, month), not scoped to the db/tenant instance",
+      "description": "`_summary_cache` is a module-level dict shared by every caller in the process, and its key is `(user_id, month)` \u2014 it does not incorporate any identifier of which `Database` instance (i.e. which tenant/session/store) the data came from. `user_id` is an autoincrementing integer that restarts at 1 for every fresh `Database()` (see the `db` fixture in tests/test_ledgerly.py, which constructs a new `Database()` per test and whose first registered user always gets id 1). In any deployment where the application creates more than one `Database` instance in the same process \u2014 e.g. per-tenant SQLite files, multiple app instances imported into one worker, or simply two independent user sessions being served by workers that share this module \u2014 a call to `monthly_summary(db_A, 1, '2026-05')` will populate the cache under key `(1, '2026-05')`, and a later call `monthly_summary(db_B, 1, '2026-05')` for a completely different user/tenant with id 1 will return the first tenant's cached financial totals instead of querying db_B. This is a cross-user/cross-tenant data disclosure: user B sees user A's spend-by-category summary. Every other function in this module and in expenses.py scopes all queries by `user_id` against the specific `db` passed in; this cache silently breaks that scoping by ignoring the db argument entirely when serving a cache hit.",
+      "reviewer": "security",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/reports.py: module-level `_summary_cache = {}` keyed by `(user_id, month)` only, with no reference to `db`. Reproduced the exact scenario described: created two separate `Database()` instances (db_a, db_b), registered a first user in each (both got id=1, confirming users.id autoincrements independently per Database instance), added a 'health' expense of $1000 for user_a and a 'food' expense of $5 for user_b in May 2026. Calling `reports.monthly_summary(db_a, 1, '2026-05')` then `reports.monthly_summary(db_b, 1, '2026-05')` returned identical results `{'health': 100000}` for both \u2014 db_b's call never queried its own database and instead served db_a's cached, unrelated financial data. This is a concrete, reproduced cross-tenant data leak, not a hypothetical. The new test added in the PR (`test_summary_cache_consistent`) only checks cache consistency within a single db/user and does not exercise or guard against this cross-instance collision, so the defect ships unmitigated. This is a genuine code defect (unsafe unbounded process-global cache with a colliding key), not an advisory 'add a test' comment, so it passes the policy gate as a real security/correctness bug.",
+        "adjusted_severity": "major"
+      }
+    },
+    {
+      "file": "tests/test_ledgerly.py",
+      "line": 109,
+      "category": "test-adequacy",
+      "title": "Cache test never writes between reads, so it cannot detect staleness",
+      "severity": "major",
+      "description": "test_summary_cache_consistent adds one expense, then calls monthly_summary(db, user, \"2026-05\") twice with no mutation between the two calls. Since no expense is added, deleted, or updated between the calls, the assertion first == second would pass identically whether or not any caching exists at all \u2014 it is not possible for this test to fail due to a caching bug. The real risk introduced by the cache in reports.py:22-43 is staleness: if a new expense is added (or an existing one deleted/updated) after the first monthly_summary call for a given (user_id, month), the second call still returns the cached totals dict instead of reflecting the change, because there is no invalidation logic anywhere in the diff. A test that adds a second expense between the two monthly_summary calls and asserts the second call reflects the updated total would fail against the current implementation, but this test avoids that scenario entirely and thus gives false confidence that the cache is 'consistent' in the sense of being correct, when it only demonstrates that repeated calls with no state change return the same value.",
+      "reviewer": "tests",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Ran reports.monthly_summary against a live Database/expenses setup: after caching, adding a new expense in the same (user, month) after the first call still yields the stale cached totals on the second call (staleness bug reproduced live: second call returned {'transport': 700} even after a new 'food' expense was added). Then reproduced the exact assertions of test_summary_cache_consistent using a hand-written monthly_summary_no_cache with zero caching logic whatsoever \u2014 the test body passed identically, proving the test as written cannot distinguish a correct cache from a broken/no-op one, since it never mutates state between the two monthly_summary calls. Also ran the full test suite (pytest) confirming test_summary_cache_consistent currently passes. This matches the reviewer's claim exactly: the test's name/structure promises to validate cache correctness but structurally cannot fail due to any caching bug, and no invalidation logic exists anywhere in reports.py's diff.",
+        "adjusted_severity": "major"
+      }
+    }
+  ],
+  "rejected_findings": [],
+  "raw_finding_count": 6,
+  "merged_count": 3,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 3,
+      "seconds": 65.3,
+      "cost_usd": 0.1314508
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 2,
+      "seconds": 50.6,
+      "cost_usd": 0.10332279999999999
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 1,
+      "seconds": 17.2,
+      "cost_usd": 0.044261800000000004
+    },
+    {
+      "stage": "verifier",
+      "in": 3,
+      "confirmed": 3,
+      "seconds": 53.8
+    }
+  ],
+  "seconds": 119.1,
+  "cost_usd": 0.55
+}

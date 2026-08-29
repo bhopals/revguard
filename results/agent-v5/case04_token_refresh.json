@@ -1,0 +1,67 @@
+{
+  "case": "case04_token_refresh",
+  "system": "agent-v5",
+  "findings": [
+    {
+      "file": "ledgerly/auth.py",
+      "line": 69,
+      "category": "correctness",
+      "title": "UPDATE tokens missing WHERE clause updates every session in the table",
+      "severity": "critical",
+      "description": "The UPDATE statement `UPDATE tokens SET expires_at = ?` has no WHERE token = ? clause, so calling refresh_token() for one user's token extends the expires_at of every token row in the tokens table for every logged-in user. Concretely: user A logs in (token A, expiry T+24h), user B logs in (token B, expiry T+24h). If A calls refresh_token(db, tokenA), B's token expiry is also silently reset to now+24h, and this happens on every refresh call by any user. The single-user test (test_refresh_token) only ever has one row in the tokens table, so it cannot detect this \u2014 with two or more concurrent sessions the bug corrupts other users' session expiry, defeating expiry-based session invalidation entirely.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/auth.py lines 65-73: refresh_token() executes `UPDATE tokens SET expires_at = ?` with only one bound parameter and no WHERE clause. Reproduced with python3 -c script: registered alice and bob, logged both in (two distinct token rows with distinct expires_at), called auth.refresh_token(db, tokenA), then re-queried both rows. Bob's (untouched user's) expires_at changed from '2026-08-30T14:40:44+00:00' to '2026-08-30T10:40:44', identical to Alice's new expiry \u2014 proving the UPDATE hits every row in the tokens table, not just the refreshed token. Confirmed the single-session test_refresh_token still passes (1 passed) since it only ever has one token row, matching the reviewer's explanation for why the existing test doesn't catch it. This is a genuine runtime defect in the shipped code (not just missing test coverage) that defeats per-session expiry for any deployment with concurrent users.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "tests/test_ledgerly.py",
+      "line": 60,
+      "category": "test-adequacy",
+      "severity": "major",
+      "title": "test_refresh_token asserts a tautology and misses the missing-WHERE-clause bug",
+      "description": "refresh_token() (ledgerly/auth.py:65-73) always returns the `token` argument it was passed, unconditionally, regardless of what the UPDATE statement did or whether it succeeded. So `auth.refresh_token(db, token) == token` on line 60 is true by construction and can never fail, no matter how the UPDATE is written. In particular, the underlying UPDATE query has no WHERE clause (`UPDATE tokens SET expires_at = ?` at ledgerly/auth.py:70) and therefore rewrites the expiry of every row in the tokens table, not just the caller's token \u2014 a single-user, single-token test setup can never expose this because there is only one row in the table. The test does not query the database to verify the new expires_at value on the refreshed token, nor does it create a second user/token to confirm that unrelated sessions are left untouched, so it exercises none of the behavior the docstring promises ('Extend a valid session token's lifetime') and would still pass if refresh_token expired every other user's session as a side effect.",
+      "reviewer": "tests",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/auth.py:65-73: refresh_token() calls authenticate() then unconditionally executes 'UPDATE tokens SET expires_at = ?' (no WHERE clause) and always `return token` regardless of the UPDATE's outcome. Read tests/test_ledgerly.py:58-60: the sole test only asserts `auth.refresh_token(db, token) == token`, which is true by construction since the function always returns its argument. Reproduced with a script creating two users (alice, bob): calling `auth.refresh_token(db, alice_token)` changed bob's unrelated token's expires_at from '2026-08-30T14:40:37+00:00' to '2026-08-30T10:40:37' even though only alice's token was refreshed \u2014 confirming the missing WHERE clause rewrites every row. Ran `pytest -k test_refresh_token` and confirmed it PASSES, so this real, concrete cross-user session-expiry bug is completely undetected by the added test. This is not 'missing coverage' advice but a test whose assertion cannot fail regardless of the code's correctness, matching the tautological-assertion carve-out in the policy.",
+        "adjusted_severity": "major"
+      }
+    }
+  ],
+  "rejected_findings": [],
+  "raw_finding_count": 4,
+  "merged_count": 2,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 2,
+      "seconds": 26.3,
+      "cost_usd": 0.06696
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 1,
+      "seconds": 29.1,
+      "cost_usd": 0.058925000000000005
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 1,
+      "seconds": 25.9,
+      "cost_usd": 0.06291659999999999
+    },
+    {
+      "stage": "verifier",
+      "in": 2,
+      "confirmed": 2,
+      "seconds": 30.8
+    }
+  ],
+  "seconds": 59.9,
+  "cost_usd": 0.3267
+}

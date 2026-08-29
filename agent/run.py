@@ -102,14 +102,22 @@ def run_specialist(name, common_prompt, title, description, diff, files,
         title=title, description=description,
         files=", ".join(files), diff=diff,
     )
-    res = run_agent(
-        prompt,
-        system_prompt=common_prompt + "\n" + briefs[name],
-        cwd=workdir,
-        allowed_tools=("Read", "Grep", "Glob"),
-        trajectory_path=Path(traj_dir) / f"reviewer_{name}.jsonl",
-    )
-    findings = extract_json(res["text"]).get("findings", [])
+    # A syntactically broken response (e.g. truncated JSON) is not a CLI
+    # failure, so retry the whole call once at this level.
+    for attempt in (1, 2):
+        res = run_agent(
+            prompt,
+            system_prompt=common_prompt + "\n" + briefs[name],
+            cwd=workdir,
+            allowed_tools=("Read", "Grep", "Glob"),
+            trajectory_path=Path(traj_dir) / f"reviewer_{name}.jsonl",
+        )
+        try:
+            findings = extract_json(res["text"]).get("findings", [])
+            break
+        except AgentError:
+            if attempt == 2:
+                raise
     for f in findings:
         f["reviewer"] = name
     return findings, res

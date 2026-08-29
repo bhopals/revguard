@@ -1,0 +1,36 @@
+{
+  "case": "case05_new_categories",
+  "system": "agent-v4",
+  "findings": [],
+  "rejected_findings": [],
+  "raw_finding_count": 0,
+  "merged_count": 0,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 0,
+      "seconds": 17.3,
+      "cost_usd": 0.0621396
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 0,
+      "seconds": 12.3,
+      "cost_usd": 0.035195399999999995
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 0,
+      "seconds": 14.4,
+      "cost_usd": 0.0479362
+    },
+    {
+      "stage": "reviewer_nitpick",
+      "findings": 0,
+      "seconds": 10.3,
+      "cost_usd": 0.0303576
+    }
+  ],
+  "seconds": 17.3,
+  "cost_usd": 0.1756
+}

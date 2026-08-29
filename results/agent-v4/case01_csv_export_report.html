@@ -1,0 +1,51 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Add CSV export for expenses</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Add CSV export for expenses</h1>
+<div class="sub">Adds a new export module so users can download their expenses as a CSV file. Supports an optional category filter and writes into an exports/ directory using the caller-supplied filename.</div>
+<span class="verdict" style="background:#c62828">Request changes — 2 confirmed finding(s), 1 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. SQL injection via unparameterized category filter</strong>
+  <div class="loc">ledgerly/export.py:18 &middot; security</div>
+  <div>The `category` parameter is interpolated directly into the SQL string with an f-string (`f&quot; AND category = &#x27;{category}&#x27;&quot;`) instead of being passed as a bound parameter, unlike the equivalent filter in `expenses.list_expenses` (ledgerly/expenses.py:57) which correctly uses `?` placeholders. Any caller that passes a category value derived from user input (e.g., a web handler forwarding a query-string `category` param) allows classic SQL injection, e.g. `category = &quot;x&#x27; UNION SELECT username, password_hash, salt, 1 FROM users --&quot;` would let an attacker exfiltrate other users&#x27; password hashes and salts into the exported CSV, bypassing the `user_id` ownership scoping entirely.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/export.py: line 18 builds SQL with f&quot; AND category = &#x27;{category}&#x27;&quot; (raw string interpolation), unlike the parameterized `? ` used in expenses.py:57 (list_expenses) and everywhere else in db.py/expenses.py. Confirmed no validation/allowlisting of category exists in export.py (expenses.py&#x27;s add_expense has a VALID_CATEGORIES check but export.py has no such guard). Reproduced the exploit by execution: created an in-memory Database with a &#x27;victim&#x27; user (password_hash=&#x27;SECRET_HASH&#x27;, salt=&#x27;SECRET_SALT&#x27;) and an &#x27;attacker&#x27; user with one expense row, then called export_expenses_csv(db, us</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>2. Path traversal via caller-supplied filename</strong>
+  <div class="loc">ledgerly/export.py:12 &middot; security</div>
+  <div>`filename` is joined directly into `EXPORT_DIR` with `os.path.join(EXPORT_DIR, filename)` and never validated or sanitized. If `filename` originates from user input (e.g. a web request parameter, which is plausible for an export feature), a value like `../../etc/cron.d/evil` or an absolute path `/etc/passwd`-style string (os.path.join discards the first component when the second is absolute) lets the caller write the CSV file anywhere on the filesystem the process can reach, overwriting arbitrary files rather than being confined to the exports/ directory.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/export.py: `filename` param flows unchanged into `os.path.join(EXPORT_DIR, filename)` at line 12 with no sanitization anywhere in the file or module. Verified by execution: called export_expenses_csv(db, 1, &quot;../outside_exports.csv&quot;) with a fake DB in a temp cwd — the CSV was written one directory above exports/ (confirmed via os.path.exists on the escaped path), proving traversal is not prevented. Also confirmed via python3 that os.path.join(&#x27;exports&#x27;, &#x27;/etc/passwd&#x27;) discards the base and returns &#x27;/etc/passwd&#x27;, so an absolute-path filename bypasses EXPORT_DIR entirely. No caller </div>
+</div>
+<footer>Pipeline: reviewer_correctness (0) &rarr; reviewer_security (2) &rarr; reviewer_tests (1) &rarr; reviewer_nitpick (2) &rarr; verifier (2) &middot; 218.5s &middot;
+$0.46 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

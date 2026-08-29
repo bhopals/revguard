@@ -81,10 +81,18 @@ def make_diff(case_dir):
 def resolve_anchor(case_dir, rel_path, anchor):
     """Return the 1-based line number of `anchor` in the post-PR file.
 
+    Files the PR touches resolve against changed/; a defect may also be
+    validly reported in an untouched file (e.g. the aggregation a schema
+    change breaks), which resolves against the case's target repo.
+
     Raises if the anchor is missing or ambiguous — that means the case
     metadata is broken and must be fixed before the eval can run.
     """
-    text = (Path(case_dir) / "changed" / rel_path).read_text()
+    changed_path = Path(case_dir) / "changed" / rel_path
+    if changed_path.exists():
+        text = changed_path.read_text()
+    else:
+        text = (target_repo_for(case_dir) / rel_path).read_text()
     hits = [i + 1 for i, line in enumerate(text.splitlines()) if anchor in line]
     if len(hits) != 1:
         raise ValueError(

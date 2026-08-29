@@ -1,0 +1,51 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Top spending categories widget</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Top spending categories widget</h1>
+<div class="sub">Adds top_categories() for the dashboard widget: the user&#x27;s n biggest categories for a month, formatted for display. Ties are broken alphabetically for stable rendering.</div>
+<span class="verdict" style="background:#c62828">Request changes — 2 confirmed finding(s), 1 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. Categories ranked by string comparison of formatted money, not numeric amount</strong>
+  <div class="loc">ledgerly/reports.py:65 &middot; correctness</div>
+  <div>The sort key is `format_money(kv[1])`, a string like &quot;$95.00&quot; or &quot;$100.00&quot;, compared lexicographically instead of comparing the underlying integer cents. Lexicographic string ordering does not match numeric ordering once dollar amounts have different digit counts: e.g. a category with 9500 cents (&quot;$95.00&quot;) sorts ahead of one with 10000 cents (&quot;$100.00&quot;) when reverse=True, because &#x27;9&#x27; &gt; &#x27;1&#x27; as the first character, even though $100 is the larger spend. This produces an incorrectly ordered &#x27;top N&#x27; list whenever such digit-length crossovers occur among a user&#x27;s category totals, which is a core correctness failure for a function whose entire purpose is ranking by spend.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/reports.py:65 — sort key is `format_money(kv[1])`, a string. Read format_money (ledgerly/utils.py:31-35): no zero-padding, e.g. 9500 -&gt; &#x27;$95.00&#x27;, 10000 -&gt; &#x27;$100.00&#x27;. Directly reproduced: sorted([9500,10000], key=format_money, reverse=True) == [9500, 10000] (wrong order, since &#x27;9&#x27;&gt;&#x27;1&#x27; lexicographically). Also monkeypatched monthly_summary to return {&#x27;Dining&#x27;:9500,&#x27;Rent&#x27;:10000,&#x27;Groceries&#x27;:3000} and called top_categories: output ranked Dining ($95) and Groceries ($30) ahead of Rent ($100), the actual top spender, confirming the ranking bug is reachable through the real function, not</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#8d6e63">MINOR</span>
+  <strong>2. Docstring/PR promise of alphabetical tie-breaking is not implemented</strong>
+  <div class="loc">ledgerly/reports.py:60 &middot; correctness</div>
+  <div>The docstring and PR description state &#x27;Ties are broken alphabetically&#x27;, but the sort key only ever uses `format_money(kv[1])` (the amount) — category name is never used as a tie-breaker. Python&#x27;s sort is stable, so equal-amount categories retain whatever order they had in `spend.items()`, which comes from `monthly_summary`&#x27;s SQL query ordered by `total DESC` (SQLite&#x27;s tie order for equal totals is unspecified/insertion-order based), not alphabetical order. Two categories with the same monthly total (e.g. both $50.00) will be rendered in an arbitrary, non-alphabetical order, contradicting the documented and PR-promised stable-alphabetical tie-break behavior relied on for stable widget rendering.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/reports.py:59-71: sort key is `lambda kv: format_money(kv[1])` — only the formatted amount, never the category name (kv[0]), so ties cannot be broken alphabetically. Reproduced with an in-memory DB: inserted three categories (&#x27;Zoo&#x27;, &#x27;Mango&#x27;, &#x27;Apple&#x27;) each totaling $50.00, inserted in that non-alphabetical order. `top_categories()` returned them as [Zoo, Mango, Apple] — pure insertion/SQL order, not alphabetical ([Apple, Mango, Zoo] as docstring/PR claim). No test in tests/test_ledgerly.py covers top_categories or this tie-break claim, so nothing masks the bug. This directly contr</div>
+</div>
+<footer>Pipeline: reviewer_correctness (2) &rarr; reviewer_security (0) &rarr; reviewer_tests (0) &rarr; verifier (2) &middot; 77.6s &middot;
+$0.29 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

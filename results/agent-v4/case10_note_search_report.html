@@ -1,0 +1,51 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Search expenses by note</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Search expenses by note</h1>
+<div class="sub">Adds search_expenses() so users can find expenses by note text, with a configurable sort column for the results.</div>
+<span class="verdict" style="background:#c62828">Request changes — 2 confirmed finding(s), 1 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. SQL injection via unvalidated `sort` column parameter</strong>
+  <div class="loc">ledgerly/expenses.py:68 &middot; security</div>
+  <div>The `sort` argument is interpolated directly into the SQL string with an f-string (`f&quot; ORDER BY {sort} DESC&quot;`) without any allow-list validation or parameterization. If `search_expenses` is reachable with caller-controlled input (e.g., a `sort` query parameter from an API endpoint), an attacker can pass a value like `1; DROP TABLE expenses;--` or, more relevantly for SQLite, a subquery/UNION-style expression (SQLite permits expressions in ORDER BY, e.g. `(SELECT password FROM users LIMIT 1)`) to exfiltrate data from other tables or corrupt the database. This is a classic SQL injection via an unvalidated ORDER BY clause, and it&#x27;s the exact pattern the codebase avoids elsewhere via parameterized `?` placeholders.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/expenses.py: search_expenses() builds `sql += f&quot; ORDER BY {sort} DESC&quot;` with the caller-supplied `sort` parameter interpolated directly, no allow-list/validation anywhere in the file or codebase (grepped for any sort validation, found none). Wrote and ran a live exploit against the actual Database class: inserted a `users` row with password_hash &#x27;SUPERSECRETHASH&#x27;, then called search_expenses(db, 1, &#x27;&#x27;, sort=&quot;(CASE WHEN (SELECT substr(password_hash,1,1) FROM users LIMIT 1)=&#x27;S&#x27; THEN id ELSE -id END)&quot;) vs the same with a wrong guess &#x27;X&#x27;. The row ordering flipped between [2,1] and [1</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#8d6e63">MINOR</span>
+  <strong>2. search_expenses has no pagination/limit unlike list_expenses</strong>
+  <div class="loc">ledgerly/expenses.py:63 &middot; correctness</div>
+  <div>Every other listing helper in this module (`list_expenses`) enforces `PAGE_SIZE` via LIMIT/OFFSET to bound result size and matches the module&#x27;s paging conventions, but `search_expenses` returns every matching row unbounded. A user with many matching notes (or a broad `text` value like a single common character) gets the entire table back in one call, inconsistent with the established pattern in this file and a likely performance/memory issue as data grows.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/expenses.py: search_expenses (lines 63-70) builds &#x27;SELECT * FROM expenses WHERE user_id = ? AND note LIKE ? ORDER BY {sort} DESC&#x27; with no LIMIT/OFFSET, unlike list_expenses which appends &#x27;LIMIT ? OFFSET ?&#x27; with PAGE_SIZE=20. Grepped the codebase for other callers/wrappers of search_expenses and found none, and db.query()/Database.query() (ledgerly/db.py) applies no default row cap (plain cur.fetchall()). Executed a reproduction: inserted 100 matching expense rows via add_expense and called search_expenses(db, 1, &#x27;coffee&#x27;) vs list_expenses(db, 1) — search_expenses returned all 100</div>
+</div>
+<footer>Pipeline: reviewer_correctness (1) &rarr; reviewer_security (1) &rarr; reviewer_tests (1) &rarr; reviewer_nitpick (3) &rarr; verifier (2) &middot; 134.8s &middot;
+$0.45 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

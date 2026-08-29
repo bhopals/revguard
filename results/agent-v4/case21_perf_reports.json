@@ -1,0 +1,104 @@
+{
+  "case": "case21_perf_reports",
+  "system": "agent-v4",
+  "findings": [
+    {
+      "file": "ledgerly/reports.py",
+      "line": 44,
+      "category": "correctness",
+      "severity": "critical",
+      "title": "budget_status join drops the month filter on expenses, aggregating all-time spend instead of the requested month's spend",
+      "description": "The rewritten query joins `expenses e` to `budgets b` only on `e.user_id = b.user_id AND e.category = b.category` \u2014 it never constrains `e.spent_on` to the requested month. The old code computed `spend` via `monthly_summary`, which filters expenses with `substr(spent_on, 1, 7) = ?` (the month), so `spent` was always scoped to the queried month. Now `spent` is the SUM of every expense the user has ever logged in that category, across all months. Concrete failure: a user sets a $50/month 'food' budget for 2026-03, spends $40 in 2026-01 and $20 in 2026-03 (well under budget for March). `budget_status(db, user, '2026-03')` will report spent=$60, remaining=-$10, and over_budget=True, even though March spend is only $20 and under budget. This also corrupts `run_budget_alerts` in ledgerly/notify.py, which calls `budget_status` directly and fires an 'over_budget' notification based on the inflated, cross-month total \u2014 a user could receive incorrect over-budget alerts driven entirely by spending from unrelated months. This directly contradicts the PR's own description ('No behavior change intended') and the function's docstring ('Compare spend against each budget set for the month').",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/reports.py: the LEFT JOIN condition is `e.user_id = b.user_id AND e.category = b.category` only, with no constraint on e.spent_on, while the WHERE clause filters only budgets (b.user_id, b.month). Reproduced with a live SQLite DB matching the reviewer's exact scenario: user has a $50 'food' budget for 2026-03, spends $40 in 2026-01 and $20 in 2026-03. budget_status(db, user, '2026-03') returned spent='$60.00', remaining='-$10.00', over_budget=True \u2014 i.e. all-time spend across months, not just March's $20. Also confirmed notify.py's run_budget_alerts calls budget_status directly and fires 'over_budget' notifications based on status['over_budget'], so the inflated cross-month total does propagate into incorrect alerts as claimed.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "tests/test_ledgerly.py",
+      "line": 96,
+      "category": "test-adequacy",
+      "severity": "major",
+      "title": "budget_status tests don't cover cross-month expenses, missing the new query's dropped month filter",
+      "description": "The PR rewrites budget_status's query to join budgets to expenses only on user_id and category (ledgerly/reports.py:44-46), with no condition on expenses.spent_on/month, so 'spent' now aggregates a category's expenses across ALL months, not just the requested one. Both test_budget_status (line 96-101) and test_budget_upsert (line 103-107) only add expenses within the same month being queried ('2026-03'), so they cannot detect this regression. A test that adds an expense in a different month (e.g., '2026-04') for the same category and asserts it is excluded from the March budget_status result would fail against the new implementation, but no such test exists, letting the query bug pass CI.",
+      "reviewer": "tests",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/reports.py:44-46: budget_status's new SQL joins budgets to expenses only on user_id and category, with no filter on expenses.spent_on/month. Reproduced with a script: added a $2.00 March 'food' expense and a $9.00 April 'food' expense with a $10.00 March budget; budget_status(db, user, '2026-03') returned spent='$11.00' (should be '$2.00'), confirming cross-month expenses leak into the result. Ran the existing tests (test_budget_status, test_budget_upsert at lines 96-107) with pytest -k budget: both pass, since they only add expenses within the same queried month ('2026-03'), so they cannot catch this regression. This matches the finding precisely.",
+        "adjusted_severity": "major"
+      }
+    },
+    {
+      "file": "ledgerly/db.py",
+      "line": 110,
+      "category": "correctness",
+      "title": "Undocumented durability trade-off from PRAGMA synchronous = OFF",
+      "severity": "major",
+      "description": "The PR silently drops SQLite's fsync-on-commit guarantee (synchronous=OFF means writes are not flushed to disk before the OS reports success), with no comment explaining the trade-off, no mention in the PR description of the durability implications (an OS crash or power loss can now corrupt the database or lose committed transactions), and no accompanying WAL-mode change that is typically paired with this setting. A future maintainer reading this line has no way to know this was an intentional, understood risk versus an oversight, and 'no behavior change intended' in the PR description is misleading since this is a real behavior change for crash safety.",
+      "reviewer": "nitpick",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/db.py:110 and confirmed the diff adds `self.conn.execute(\"PRAGMA synchronous = OFF\")` with no accompanying comment. Verified via `python3 -c` that this pragma actually sets synchronous mode to 0 (OFF), which per SQLite semantics means the engine does not wait for data to be flushed to disk before reporting a transaction committed, risking corruption/lost transactions on OS crash or power loss. Grepped the whole repo for 'journal_mode'/'WAL' and found none, confirming no WAL pairing exists anywhere on this code path. Grepped for any other 'synchronous' references and found only this one line, confirming it is new/undocumented. No PR description file is present in the repo to verify the 'no behavior change intended' wording, but the core technical claim \u2014 an undocumented durability-reducing pragma added with no WAL pairing \u2014 is accurate and reachable on every Database() construction.",
+        "adjusted_severity": "major"
+      }
+    }
+  ],
+  "rejected_findings": [
+    {
+      "file": "ledgerly/db.py",
+      "line": 100,
+      "category": "correctness",
+      "title": "Index name doesn't reflect its full column set / unclear purpose",
+      "severity": "minor",
+      "description": "idx_expenses_user_category is a 3-column index on (user_id, category, spent_on) but the name only references two of the three columns, and no comment states which query path it's meant to serve. The new budget_status query (reports.py) joins on user_id/category only and never filters on spent_on, so it's not obvious from the code alone which query this index actually accelerates, making it hard for a future maintainer to know whether the index is still needed if that query changes.",
+      "reviewer": "nitpick",
+      "verification": {
+        "verdict": "REJECTED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/db.py:100-101 and reports.py:40-49: the index idx_expenses_user_category is indeed defined as (user_id, category, spent_on), and budget_status's LEFT JOIN condition only uses e.user_id/e.category (no spent_on predicate) \u2014 so the factual observations are accurate. However the finding does not identify any actual behavioral defect: the query still works correctly and the index still accelerates the user_id/category lookup (a 3-column index is usable via its leading columns even if unused columns aren't filtered). The complaint is purely about naming conventions and absence of an explanatory comment for future maintainers \u2014 a documentation/style nitpick (self-tagged 'nitpick' by the reviewer) mislabeled as 'correctness'. Per the verdict rules, purely stylistic/speculative claims about maintainability should be rejected even when factually accurate.",
+        "adjusted_severity": "minor"
+      }
+    }
+  ],
+  "raw_finding_count": 6,
+  "merged_count": 4,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 1,
+      "seconds": 33.2,
+      "cost_usd": 0.10097360000000001
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 1,
+      "seconds": 26.9,
+      "cost_usd": 0.0534114
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 1,
+      "seconds": 21.7,
+      "cost_usd": 0.0613682
+    },
+    {
+      "stage": "reviewer_nitpick",
+      "findings": 3,
+      "seconds": 54.7,
+      "cost_usd": 0.09136079999999999
+    },
+    {
+      "stage": "verifier",
+      "in": 4,
+      "confirmed": 3,
+      "seconds": 41.4
+    }
+  ],
+  "seconds": 96.1,
+  "cost_usd": 0.5841
+}

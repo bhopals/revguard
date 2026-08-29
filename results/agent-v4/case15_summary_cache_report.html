@@ -1,0 +1,79 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Cache monthly summaries</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Cache monthly summaries</h1>
+<div class="sub">monthly_summary is the hottest query in the dashboard, so cache its result per (user, month). Includes a test showing the cache returns consistent results.</div>
+<span class="verdict" style="background:#c62828">Request changes — 6 confirmed finding(s), 2 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. Cache never invalidated on expense/budget writes, returns stale totals</strong>
+  <div class="loc">ledgerly/reports.py:32 &middot; correctness</div>
+  <div>monthly_summary caches results in a module-level dict keyed by (user_id, month) with no invalidation hook. add_expense, delete_expense, and set_budget never touch _summary_cache. Once a (user_id, month) pair has been queried, every subsequent call — including from budget_status (line 52), which depends on monthly_summary for spend totals — returns the first-ever result for that key, ignoring any expenses added or deleted afterward in that month. E.g.: call monthly_summary(db, user, &#x27;2026-03&#x27;) with no expenses -&gt; caches {}; then add_expense(db, user, 500, &#x27;food&#x27;, &#x27;2026-03-05&#x27;); budget_status(db, user, &#x27;2026-03&#x27;) will report spent=$0.00 and over_budget=False even though $5.00 was actually spent, silently breaking the budget-overrun alert the PR&#x27;s own docstring on budget_status still promises.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/reports.py: _summary_cache is a module-level dict populated by monthly_summary and never cleared or updated by add_expense/delete_expense/set_budget in expenses.py or reports.py (confirmed via grep -rn &#x27;_summary_cache&#x27; across ledgerly/, only hits are the cache&#x27;s own definition/read/write in reports.py). Reproduced live: calling monthly_summary(db, user, &#x27;2026-03&#x27;) with no expenses caches {}; then set_budget(..., 300) and add_expense(..., 500, &#x27;food&#x27;, &#x27;2026-03-05&#x27;); a subsequent monthly_summary call still returns {} and budget_status returns spent=&#x27;$0.00&#x27;, over_budget=False despit</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>2. Cache key not scoped to db instance, causing cross-database data leakage</strong>
+  <div class="loc">ledgerly/reports.py:22 &middot; correctness</div>
+  <div>_summary_cache is a single process-wide dict keyed only by (user_id, month), with no reference to which Database/connection produced the cached rows. user_id is an autoincrement integer that restarts at 1 for every new Database() instance (see ledgerly/db.py SCHEMA, id INTEGER PRIMARY KEY AUTOINCREMENT). Any two distinct Database instances (e.g. two tenants&#x27; SQLite files, or two test/service instances in the same process) that happen to assign the same user_id will collide on the cache key and one instance&#x27;s monthly_summary results leak into the other&#x27;s. Concretely: Database A registers user &#x27;alice&#x27; (id=1), calls monthly_summary(dbA, 1, &#x27;2026-03&#x27;) -&gt; caches {&#x27;food&#x27;: 350}. Database B (different db, e.g. different tenant or a later request cycle) registers its own user &#x27;bob&#x27; as id=1 and calls monthly_summary(dbB, 1, &#x27;2026-03&#x27;); the cache hit returns dbA&#x27;s alice totals instead of querying dbB, so bob sees another tenant&#x27;s spending data.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/db.py (confirms user_id is AUTOINCREMENT INTEGER PRIMARY KEY, restarting at 1 per new Database/sqlite file) and ledgerly/reports.py (confirms _summary_cache is a bare module-level dict keyed only by (user_id, month), with no db/connection identity in the key). Reproduced the exact scenario in the finding with a live script: created dbA, registered &#x27;alice&#x27; (id=1), added a $350 food expense, called monthly_summary(dbA, 1, &#x27;2026-03&#x27;) -&gt; {&#x27;food&#x27;: 35000}. Created a second independent Database() dbB, registered &#x27;bob&#x27; (also id=1, since AUTOINCREMENT restarts per DB), added a $1 transpor</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>3. Cached summary is never invalidated after expense deletion, exposing deleted financial data</strong>
+  <div class="loc">ledgerly/reports.py:42 &middot; security</div>
+  <div>expenses.delete_expense() verifies ownership and removes a row from `expenses`, but `monthly_summary`&#x27;s cache at line 42 is never invalidated by any write path (add_expense, delete_expense). Once a user views their dashboard for a given month (populating `_summary_cache[(user_id, month)]`), deleting an expense for that month no longer changes what `monthly_summary`/`budget_status` report for the remainder of the process&#x27;s lifetime: the deleted transaction&#x27;s amount keeps being included in category totals and budget &#x27;spent&#x27;/&#x27;remaining&#x27; figures served back to the user. A user who deletes an expense specifically to remove sensitive or erroneous financial data from view will continue to see (and have exposed via budget_status) totals that reflect the deleted record, which is a meaningful data-exposure regression introduced by this PR since no caching existed before.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/reports.py and ledgerly/expenses.py: _summary_cache is a module-level dict populated in monthly_summary and never cleared anywhere; expenses.py (add_expense/delete_expense) doesn&#x27;t import or reference reports/_summary_cache at all, and grep confirms no other invalidation site exists. Reproduced live: added an expense, called reports.monthly_summary (caches {&#x27;food&#x27;: 1500}), deleted the expense via expenses.delete_expense (row removed from DB), then called reports.monthly_summary again — it still returned {&#x27;food&#x27;: 1500}, i.e. the deleted expense&#x27;s amount continues to appear in tota</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>4. New cache test cannot detect a caching bug</strong>
+  <div class="loc">tests/test_ledgerly.py:109 &middot; test-adequacy</div>
+  <div>test_summary_cache_consistent (lines 109-113) only asserts that two consecutive calls to monthly_summary return equal dicts. Since the underlying data doesn&#x27;t change between the two calls, the un-cached code path (a plain SQL query) would return the exact same dict on both calls too — the test passes identically whether or not the new _summary_cache logic in reports.py is present or working at all. It never verifies the actual behavior the PR introduces (e.g. that a second call skips the DB query, or that the cache is returning a stored value rather than re-querying), so it cannot fail if the caching implementation is broken, e.g. if the cache key were wrong or the cache silently no-op&#x27;d.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read reports.py and test_ledgerly.py to confirm the test as described (lines 109-113: adds one expense, calls monthly_summary twice, asserts equality). Ran the test with the original code: passes. Then edited reports.py to strip out the entire _summary_cache logic (reverting monthly_summary to the plain uncached SQL query on every call, i.e. simulating a completely broken/no-op cache), and reran test_summary_cache_consistent — it still PASSED, because the DB data is unchanged between the two calls so the query returns the same dict regardless of caching. This directly proves the test cannot de</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>5. No test covers cache staleness, the main risk introduced by this PR</strong>
+  <div class="loc">tests/test_ledgerly.py:113 &middot; test-adequacy</div>
+  <div>The PR adds an unbounded, never-invalidated module-level cache (_summary_cache in reports.py) keyed by (user_id, month). The obvious risk of this design is that monthly_summary will keep returning stale results after new expenses are added for an already-cached (user, month) pair. No test exercises this: calling monthly_summary, then adding another expense for the same user/month, then calling monthly_summary again to check whether the new expense is (incorrectly) reflected or (per current implementation) silently dropped. Such a test would have caught that the cache returns outdated totals indefinitely within a process lifetime, which is the central behavioral change this PR makes.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read reports.py: _summary_cache is a module-level dict keyed by (user_id, month), populated in monthly_summary and never invalidated or cleared anywhere in the codebase (grep for _summary_cache shows only definition/read/write sites in reports.py; expenses.add_expense and other mutators have no cache-clearing logic). Reproduced with a live script: added an expense, called monthly_summary (got {&#x27;food&#x27;:100}), added another expense for the same user/month, called monthly_summary again and got the identical stale {&#x27;food&#x27;:100} instead of the updated total — confirming indefinite staleness within th</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#8d6e63">MINOR</span>
+  <strong>6. Docstring claims a caching guarantee the code does not implement</strong>
+  <div class="loc">ledgerly/reports.py:28 &middot; correctness</div>
+  <div>The docstring says results are cached because &quot;the numbers rarely change within a session,&quot; implying the cache is scoped to some session and expires with it. There is no session concept anywhere in this codebase (no session object, no per-request/per-login scope, no TTL) — the cache is a bare process-global dict that lives forever and is shared across all users, requests, and even independent `Database` instances (see the cross-instance leak above). The comment misleads future maintainers into thinking staleness is bounded when it is not.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/reports.py: `_summary_cache = {}` is a bare module-level dict with no TTL/expiry and no session hook. Grepped the whole repo for session/ttl/expire/_cache and found the only session/TTL concept (auth.py&#x27;s token TTL) is completely unrelated to `_summary_cache` — nothing clears or scopes the cache to a session, request, or Database instance. Executed a reproduction: created a Database instance, added an expense, called monthly_summary (caches under key (user_id, month)), closed it, then created a completely independent fresh Database with a new user (autoincrement reused id=1) and </div>
+</div>
+<footer>Pipeline: reviewer_correctness (2) &rarr; reviewer_security (2) &rarr; reviewer_tests (2) &rarr; reviewer_nitpick (3) &rarr; verifier (6) &middot; 105.0s &middot;
+$0.88 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

@@ -20,7 +20,13 @@
       "anchor": "def accept_invite(db, code, user_id):",
       "category": "correctness",
       "severity": "major",
-      "description": "accept_invite inserts the member directly and never checks MAX_MEMBERS, bypassing the cap that add_member enforces a screen up. Households can grow without bound through invites."
+      "description": "accept_invite inserts the member directly and never checks MAX_MEMBERS, bypassing the cap that add_member enforces a screen up. Households can grow without bound through invites.",
+      "alt_anchors": [
+        {
+          "file": "ledgerly/household.py",
+          "anchor": "(hid, user_id, utcnow_iso()),"
+        }
+      ]
     },
     {
       "id": "c19-d3",
@@ -28,7 +34,7 @@
       "anchor": "\"SELECT household_id FROM invites WHERE code = ?\", (code,)",
       "category": "security",
       "severity": "major",
-      "description": "Accepted invites are never consumed or expired — no used_at update, no expiry check, no delete. One leaked code admits unlimited people forever. The invites table even has a used_at column that nothing writes."
+      "description": "Accepted invites are never consumed or expired \u2014 no used_at update, no expiry check, no delete. One leaked code admits unlimited people forever. The invites table even has a used_at column that nothing writes."
     }
   ]
 }

@@ -1,0 +1,41 @@
+{
+  "case": "case10_note_search",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 68,
+      "category": "security",
+      "title": "SQL injection via unvalidated sort column",
+      "description": "The `sort` parameter is interpolated directly into the SQL string with an f-string instead of being validated against an allowlist of column names. Since `search_expenses` is described as having a 'configurable sort column', an attacker-controlled `sort` value (e.g. `id; DROP TABLE expenses; --` or a UNION-based payload) would be executed verbatim, allowing arbitrary SQL execution against the database.",
+      "severity": "critical"
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 65,
+      "category": "robustness",
+      "title": "Unescaped LIKE wildcards in search text",
+      "description": "`text` is inserted into the LIKE pattern without escaping `%` or `_`, so a user's search input containing these characters behaves as unintended SQL wildcards (e.g. `_` matches any single character, and a text of `%` matches every row). This can produce incorrect/overbroad search results and, combined with the note field, may leak more expenses than the note text should match.",
+      "severity": "minor"
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 70,
+      "category": "robustness",
+      "title": "No result limit or pagination on search results",
+      "description": "Unlike the other expense-listing query in this file which applies PAGE_SIZE/LIMIT and OFFSET, search_expenses returns every matching row with no LIMIT. A user with many matching expenses (or an adversarial note text like '%') can trigger an unbounded query result, risking excessive memory usage and slow responses.",
+      "severity": "major"
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 63,
+      "category": "test-adequacy",
+      "title": "No tests for new search_expenses function",
+      "description": "The PR adds a new public function with SQL string interpolation and no accompanying tests covering basic search behavior, empty/no-match results, the sort parameter, or malicious inputs (e.g. SQL injection via sort, wildcard characters in text). Given the security-sensitive nature of the interpolated sort clause, this is inadequately tested.",
+      "severity": "major"
+    }
+  ],
+  "seconds": 28.3,
+  "cost_usd": 0.0348798,
+  "num_turns": 1
+}
