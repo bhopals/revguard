@@ -1,0 +1,24 @@
+{
+  "id": "case01_csv_export",
+  "title": "Add CSV export for expenses",
+  "pr_description": "Adds a new export module so users can download their expenses as a CSV file. Supports an optional category filter and writes into an exports/ directory using the caller-supplied filename.",
+  "clean": false,
+  "defects": [
+    {
+      "id": "c01-d1",
+      "file": "ledgerly/export.py",
+      "anchor": "AND category = '{category}'",
+      "category": "security",
+      "severity": "critical",
+      "description": "Category filter is interpolated into the SQL string with an f-string instead of a bound parameter, allowing SQL injection through the category argument."
+    },
+    {
+      "id": "c01-d2",
+      "file": "ledgerly/export.py",
+      "anchor": "os.path.join(EXPORT_DIR, filename)",
+      "category": "security",
+      "severity": "major",
+      "description": "Caller-supplied filename is joined to the export directory without sanitization, so names like '../../etc/x' escape the exports directory (path traversal)."
+    }
+  ]
+}

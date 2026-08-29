@@ -1,0 +1,24 @@
+{
+  "id": "case08_bulk_import",
+  "title": "Bulk expense import",
+  "pr_description": "Adds import_expenses() so users can migrate data from other apps. Takes a list of row dicts (as parsed from CSV/JSON uploads) and returns how many were imported, skipping rows that fail validation.",
+  "clean": false,
+  "defects": [
+    {
+      "id": "c08-d1",
+      "file": "ledgerly/expenses.py",
+      "anchor": "except Exception:",
+      "category": "robustness",
+      "severity": "major",
+      "description": "The bare except-and-continue silently drops any failing row and hides the reason. The caller gets only a count, with no way to know which rows were rejected or why; even programming errors (KeyError from a malformed dict) vanish."
+    },
+    {
+      "id": "c08-d2",
+      "file": "ledgerly/expenses.py",
+      "anchor": "row[\"amount_cents\"],",
+      "category": "correctness",
+      "severity": "critical",
+      "description": "Rows come from parsed CSV/JSON uploads, so amount_cents is typically a string like '12.50'. It is passed straight to add_expense and SQLite stores the TEXT value, silently corrupting later SUM aggregations. The importer must validate/convert amounts (e.g. via parse_money)."
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "id": "case09_report_refactor",
+  "title": "Deduplicate budget queries in reports",
+  "pr_description": "Pure refactor: extracts the repeated budget-row query into a _budgets_for_month helper and tidies naming. No behavior change intended.",
+  "clean": true,
+  "defects": []
+}

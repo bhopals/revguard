@@ -1,0 +1,32 @@
+{
+  "id": "case07_password_reset",
+  "title": "Password reset codes",
+  "pr_description": "Adds a two-step password reset flow: request_password_reset() issues a 6-digit code (delivery handled by the caller, e.g. email), and reset_password() sets a new password when the code matches.",
+  "clean": false,
+  "defects": [
+    {
+      "id": "c07-d1",
+      "file": "ledgerly/auth.py",
+      "anchor": "code = str(random.randint(100000, 999999))",
+      "category": "security",
+      "severity": "major",
+      "description": "Reset codes are generated with the non-cryptographic random module, whose Mersenne Twister output is predictable. Must use the secrets module like the rest of this file."
+    },
+    {
+      "id": "c07-d2",
+      "file": "ledgerly/auth.py",
+      "anchor": "_reset_codes[username] = code",
+      "category": "security",
+      "severity": "major",
+      "description": "Codes are stored in a process-global dict with no expiry, despite RESET_CODE_TTL_MINUTES being defined. A code stays valid forever (until used or process restart)."
+    },
+    {
+      "id": "c07-d3",
+      "file": "ledgerly/auth.py",
+      "anchor": "if _reset_codes.get(username) != code:",
+      "category": "security",
+      "severity": "major",
+      "description": "A 6-digit code can be brute-forced in at most a million attempts and nothing limits attempts or invalidates the code after failures; the comparison is also not constant-time."
+    }
+  ]
+}

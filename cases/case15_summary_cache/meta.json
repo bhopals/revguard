@@ -1,0 +1,33 @@
+{
+  "id": "case15_summary_cache",
+  "title": "Cache monthly summaries",
+  "pr_description": "monthly_summary is the hottest query in the dashboard, so cache its result per (user, month). Includes a test showing the cache returns consistent results.",
+  "clean": false,
+  "tier": 2,
+  "defects": [
+    {
+      "id": "c15-d1",
+      "file": "ledgerly/reports.py",
+      "anchor": "_summary_cache[key] = totals",
+      "category": "correctness",
+      "severity": "critical",
+      "description": "Nothing ever invalidates the cache. expenses.add_expense and delete_expense (outside this diff) mutate the underlying rows, so after any new expense the dashboard, budget_status and over-budget flags serve stale totals for the rest of the process lifetime."
+    },
+    {
+      "id": "c15-d2",
+      "file": "ledgerly/reports.py",
+      "anchor": "_summary_cache = {}",
+      "category": "robustness",
+      "severity": "minor",
+      "description": "The module-global cache grows without bound (every user x month ever queried) and is shared across Database instances, so tests or multi-tenant embedders leak entries between unrelated databases."
+    },
+    {
+      "id": "c15-d3",
+      "file": "tests/test_ledgerly.py",
+      "anchor": "assert first == second",
+      "category": "test-adequacy",
+      "severity": "major",
+      "description": "The added test calls monthly_summary twice with no writes in between and asserts the results are equal — that can never fail and specifically avoids the write-then-read sequence that exposes the stale cache."
+    }
+  ]
+}

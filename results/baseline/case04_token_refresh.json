@@ -1,0 +1,33 @@
+{
+  "case": "case04_token_refresh",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/auth.py",
+      "line": 68,
+      "category": "correctness",
+      "severity": "critical",
+      "title": "UPDATE statement missing WHERE clause extends every session's expiry",
+      "description": "The SQL `UPDATE tokens SET expires_at = ?` has no WHERE clause, so refreshing one token extends the expires_at of every token row in the table for every user, not just the token being refreshed. This is both a correctness bug and a security issue: it silently prolongs the sessions of all other logged-in users (including ones that should have expired), which could let stale or attacker-obtained tokens remain valid indefinitely."
+    },
+    {
+      "file": "ledgerly/auth.py",
+      "line": 65,
+      "category": "security",
+      "severity": "minor",
+      "title": "refresh_token allows unbounded sliding expiry",
+      "description": "authenticate() only checks that the token is not yet expired, so refresh_token() lets a client extend a session indefinitely as long as it refreshes before each expiry, with no absolute session lifetime cap. A stolen token could be kept alive forever by an attacker who refreshes it periodically."
+    },
+    {
+      "file": "tests/test_ledgerly.py",
+      "line": 58,
+      "category": "test-adequacy",
+      "severity": "major",
+      "title": "Test does not verify refresh behavior or catch the missing WHERE clause bug",
+      "description": "test_refresh_token only asserts that refresh_token returns the same token string; it never checks that expires_at was actually updated for that token, and critically never checks that other users' tokens are unaffected. This test would pass even with the UPDATE-all-rows bug, so it fails to catch a critical defect. It also doesn't test refreshing an expired or invalid token."
+    }
+  ],
+  "seconds": 8.5,
+  "cost_usd": 0.018223800000000002,
+  "num_turns": 1
+}

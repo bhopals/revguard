@@ -1,0 +1,41 @@
+{
+  "case": "case01_csv_export",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/export.py",
+      "line": 16,
+      "category": "security",
+      "title": "SQL injection via category filter",
+      "severity": "critical",
+      "description": "The category parameter is interpolated directly into the SQL string with an f-string instead of being passed as a bound parameter, allowing arbitrary SQL injection through the category argument (e.g. category=\"' OR '1'='1\" or a UNION-based attack) if it originates from user input."
+    },
+    {
+      "file": "ledgerly/export.py",
+      "line": 12,
+      "category": "security",
+      "title": "Path traversal via caller-supplied filename",
+      "severity": "critical",
+      "description": "filename is joined into the export path with os.path.join without any sanitization. A filename containing path separators or '..' segments (e.g. '../../etc/cron.d/evil' or an absolute path like '/etc/passwd') can escape the exports/ directory and let the caller write/overwrite arbitrary files on the filesystem."
+    },
+    {
+      "file": "ledgerly/export.py",
+      "line": 9,
+      "category": "test-adequacy",
+      "title": "No tests included for new export module",
+      "severity": "major",
+      "description": "The PR adds a new public function (export_expenses_csv) with filtering logic, file I/O, and SQL construction, but no unit tests are included to verify correct CSV output, category filtering behavior, or handling of edge cases (empty result set, missing filename extension, special characters in notes, etc.)."
+    },
+    {
+      "file": "ledgerly/export.py",
+      "line": 12,
+      "category": "robustness",
+      "title": "Existing files silently overwritten",
+      "severity": "minor",
+      "description": "Opening the target path with mode 'w' silently overwrites any pre-existing file at that path with no check or warning, which combined with the unsanitized filename could destroy existing data at attacker-chosen locations."
+    }
+  ],
+  "seconds": 11.0,
+  "cost_usd": 0.020459800000000004,
+  "num_turns": 1
+}

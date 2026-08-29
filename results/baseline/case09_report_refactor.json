@@ -1,0 +1,8 @@
+{
+  "case": "case09_report_refactor",
+  "system": "baseline",
+  "findings": [],
+  "seconds": 2.7,
+  "cost_usd": 0.012673799999999999,
+  "num_turns": 1
+}

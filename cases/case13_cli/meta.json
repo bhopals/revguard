@@ -1,0 +1,33 @@
+{
+  "id": "case13_cli",
+  "title": "Command-line interface for Ledgerly",
+  "pr_description": "Adds a ledgerly CLI with register, login, add, list and summary commands so the service can be used without writing Python. Token is cached in the user's home directory between invocations.",
+  "clean": false,
+  "tier": 2,
+  "defects": [
+    {
+      "id": "c13-d1",
+      "file": "ledgerly/cli.py",
+      "anchor": "amount_cents = int(float(args.amount) * 100)",
+      "category": "correctness",
+      "severity": "critical",
+      "description": "Amount conversion goes through float: int(float('19.99')*100) == 1998, silently losing a cent. The repo already has utils.parse_money for exactly this; the CLI must use it."
+    },
+    {
+      "id": "c13-d2",
+      "file": "ledgerly/cli.py",
+      "anchor": "except Exception as e:",
+      "category": "robustness",
+      "severity": "major",
+      "description": "main() catches every exception, prints the message and falls through to return 0, so scripted callers see success on failure. Errors must set a non-zero exit code."
+    },
+    {
+      "id": "c13-d3",
+      "file": "ledgerly/cli.py",
+      "anchor": "add_login.add_argument(\"password\")",
+      "category": "security",
+      "severity": "major",
+      "description": "register/login take the password as a positional command-line argument, exposing it in shell history and the process list (ps). It should be read via getpass or stdin."
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "case": "case08_bulk_import",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 81,
+      "category": "robustness",
+      "title": "Overly broad exception handling masks real failures",
+      "description": "The bare `except Exception: pass` catches every possible error, not just validation failures (e.g. bad amount_cents type, missing category). It will also silently swallow database errors (locked DB, disk I/O errors, programming errors like TypeError from a bug elsewhere), making it impossible to distinguish 'row was invalid' from 'the import subsystem is broken'. This also makes debugging production issues very difficult since failures leave no trace.",
+      "severity": "major"
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 83,
+      "category": "robustness",
+      "title": "No visibility into which rows failed or why",
+      "description": "import_expenses only returns a count of successfully imported rows. Callers/users have no way to know which specific rows were skipped or why, so users uploading a CSV/JSON with a few bad rows cannot fix their data. For a bulk-import feature this is a significant usability/robustness gap.",
+      "severity": "major"
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 70,
+      "category": "security",
+      "title": "No limit on number of rows processed",
+      "description": "The function iterates over `rows` with no cap on size. A large uploaded CSV/JSON (e.g. millions of rows) will be processed synchronously with no batching, timeout, or size limit, allowing a single request to consume excessive CPU/DB time \u2014 a potential resource-exhaustion (DoS) vector for an upload-driven endpoint.",
+      "severity": "major"
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 69,
+      "category": "robustness",
+      "title": "No transactional grouping for the batch import",
+      "description": "Each row is presumably committed individually via add_expense with no surrounding transaction. If the process is interrupted partway (crash, exception, timeout) there is no way to roll back or resume the batch, and partial imports can leave the user's data half-migrated with no indication of where it stopped.",
+      "severity": "minor"
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 63,
+      "category": "test-adequacy",
+      "title": "No tests added for import_expenses",
+      "description": "The diff adds a new public function with several edge cases (missing keys, wrong types, empty rows list, all rows invalid, mix of valid/invalid rows) but includes no accompanying unit tests, so none of this behavior is verified.",
+      "severity": "major"
+    }
+  ],
+  "seconds": 38.8,
+  "cost_usd": 0.0483398,
+  "num_turns": 1
+}

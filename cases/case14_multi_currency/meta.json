@@ -1,0 +1,33 @@
+{
+  "id": "case14_multi_currency",
+  "title": "Multi-currency expenses",
+  "pr_description": "Lets users record expenses in a currency other than USD. Adds a currency column (default USD) and a currency parameter to add_expense, with a test covering the new parameter. Reporting is unchanged.",
+  "clean": false,
+  "tier": 2,
+  "defects": [
+    {
+      "id": "c14-d1",
+      "file": "ledgerly/expenses.py",
+      "anchor": "def add_expense(db, user_id, amount_cents, category, spent_on, note=\"\", currency=\"USD\"):",
+      "category": "correctness",
+      "severity": "critical",
+      "description": "reports.monthly_summary and budget_status (not touched by this PR) SUM amount_cents across ALL currencies, so once a user records one EUR expense their totals, budgets and alerts silently add euros to dollars. The PR must not ship until aggregation is currency-aware."
+    },
+    {
+      "id": "c14-d2",
+      "file": "ledgerly/expenses.py",
+      "anchor": "(user_id, amount_cents, currency, category, note,",
+      "category": "robustness",
+      "severity": "major",
+      "description": "currency is stored without any validation, unlike category which is checked against VALID_CATEGORIES two lines up. Any string ('usd', 'EURO', '💶') is accepted, fragmenting future per-currency grouping."
+    },
+    {
+      "id": "c14-d3",
+      "file": "tests/test_ledgerly.py",
+      "anchor": "assert row[\"currency\"] == \"EUR\"",
+      "category": "test-adequacy",
+      "severity": "major",
+      "description": "The added test only checks the currency round-trips on a single expense. Nothing exercises what happens to monthly_summary/budget_status with mixed currencies — exactly the interaction this PR breaks."
+    }
+  ]
+}

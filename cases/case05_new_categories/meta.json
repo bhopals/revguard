@@ -1,0 +1,7 @@
+{
+  "id": "case05_new_categories",
+  "title": "Add education and travel categories",
+  "pr_description": "Adds two frequently requested expense categories, with a regression test that both are accepted and unknown categories are still rejected.",
+  "clean": true,
+  "defects": []
+}

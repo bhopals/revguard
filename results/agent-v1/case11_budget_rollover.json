@@ -1,0 +1,41 @@
+{
+  "case": "case11_budget_rollover",
+  "system": "agent-v1",
+  "findings": [
+    {
+      "file": "ledgerly/utils.py",
+      "line": 54,
+      "category": "correctness",
+      "title": "next_month does not roll over the year for December",
+      "description": "next_month('2026-12') computes int('12')+1 = 13 and returns '2026-13', an invalid month key that never matches any real date's month_of() output. rollover_budgets(db, user_id, '2026-12') will therefore silently create budgets under the bogus month '2026-13' that are permanently unreachable by budget_status/monthly_summary for any real month, effectively losing the rolled-over budget for every December-to-January transition (a case guaranteed to occur every year).",
+      "reviewer": "generalist"
+    },
+    {
+      "file": "ledgerly/reports.py",
+      "line": 75,
+      "category": "correctness",
+      "title": "Rollover formula doubles the budget instead of carrying only the unspent remainder",
+      "description": "new_limit = b['limit_cents'] + carry, where carry = max(limit - spent, 0). Since the same limit_cents is used both as the base and to compute the unspent carry, if a category is fully unspent in a month, new_limit becomes 2x the original limit (e.g. limit=10000, spent=0 -> new_limit=20000), not limit+leftover-from-a-separate-base as the docstring implies. Running rollover_budgets repeatedly across consecutive months with little/no spending causes the budget to compound geometrically (10000 -> 20000 -> 40000 -> ...) rather than simply accumulating the unspent leftover, which is very likely not the intended 'carry unspent budget' behavior and will produce runaway budget limits in real usage.",
+      "reviewer": "generalist"
+    },
+    {
+      "file": "tests/test_ledgerly.py",
+      "line": 108,
+      "category": "test-adequacy",
+      "title": "test_rollover assertion is a tautology and verifies nothing",
+      "description": "assert len(status) >= 0 is always true regardless of behavior (len() can never be negative), so this test cannot fail even if rollover_budgets computes the wrong target month, the wrong new_limit, or fails to create any budget row at all. It gives false confidence that the new rollover feature (including the doubling bug and the December year-rollover bug above) is covered by tests.",
+      "reviewer": "generalist"
+    }
+  ],
+  "raw_finding_count": 4,
+  "stages": [
+    {
+      "stage": "reviewer_generalist",
+      "findings": 4,
+      "seconds": 39.8,
+      "cost_usd": 0.073928
+    }
+  ],
+  "seconds": 39.8,
+  "cost_usd": 0.0739
+}
