@@ -1,0 +1,50 @@
+{
+  "findings": [
+    {
+      "file": "revguard.py",
+      "line": 266,
+      "category": "correctness",
+      "severity": "critical",
+      "title": "Filtering to an empty list produces a false 'approve' verdict",
+      "description": "When --min-severity filters out every finding (e.g. the run only produced major/minor findings and the user passed --min-severity critical), `kept` is an empty list at revguard.py:264-265. write_report() (agent/run.py:284-289) treats an empty findings list as 'no defects were found' and writes '**Verdict: approve.** No blocking defects found. Every hypothesis raised during review was either confirmed fixed in the diff or rejected under verification.' This is factually wrong: real, confirmed findings exist, they were simply hidden by the display filter. With --post-comment (revguard.py:274-289) this false approval is posted verbatim to the real GitHub PR, misrepresenting the review outcome to reviewers/maintainers who rely on the comment.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read revguard.py:255-289 and agent/run.py write_report (line 277-314). Confirmed the new --min-severity code computes `kept` by filtering result['findings'] and passes only `kept` to write_report, while write_report treats an empty findings list as grounds for '**Verdict: approve** ... every hypothesis ... confirmed fixed or rejected'. Reproduced directly: called write_report with a real major-severity finding filtered out by threshold='critical' \u2014 kept=[] and the generated report.md literally states 'Verdict: approve. No blocking defects found... every hypothesis... confirmed fixed in the diff or rejected under verification,' despite a real confirmed finding existing. Also confirmed --post-comment (revguard.py:274-289) reads this same report.md verbatim and posts it to the real PR with a footer claiming findings 'survived an adversarial verification agent instructed to disprove it' \u2014 compounding the misrepresentation. This is a reachable, concrete correctness bug in the new feature's code (not a missing-test complaint), so it passes the policy gate as a genuine defect.",
+        "adjusted_severity": "critical"
+      }
+    }
+  ],
+  "rejected_findings": [],
+  "raw_finding_count": 4,
+  "merged_count": 1,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 4,
+      "seconds": 94.6,
+      "cost_usd": 0.2093136
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 0,
+      "seconds": 89.5,
+      "cost_usd": 0.20463779999999998
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 0,
+      "seconds": 24.7,
+      "cost_usd": 0.05363079999999999
+    },
+    {
+      "stage": "verifier",
+      "in": 1,
+      "confirmed": 1,
+      "seconds": 32.9
+    }
+  ],
+  "seconds": 127.5,
+  "cost_usd": 0.5345
+}
