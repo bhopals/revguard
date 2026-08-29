@@ -1,0 +1,51 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Multi-currency expenses</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Multi-currency expenses</h1>
+<div class="sub">Lets users record expenses in a currency other than USD. Adds a currency column (default USD) and a currency parameter to add_expense, with a test covering the new parameter. Reporting is unchanged.</div>
+<span class="verdict" style="background:#e65100">Request changes — 2 confirmed finding(s), 0 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>1. monthly_summary sums amounts across currencies as if they were the same currency</strong>
+  <div class="loc">ledgerly/reports.py:25 &middot; correctness</div>
+  <div>add_expense now accepts a currency parameter (ledgerly/expenses.py:18) and stores it per-row, but monthly_summary&#x27;s SQL still does `SUM(amount_cents) ... GROUP BY category` with no grouping or filtering by currency (reports.py:24-31). If a user records e.g. 350 USD and 350 EUR in &#x27;food&#x27; during the same month, the query returns {&#x27;food&#x27;: 700}, silently mixing currencies into one meaningless cents total. This propagates into budget_status (reports.py:34-57), which compares that mixed total against a budget limit and computes &#x27;remaining&#x27;/&#x27;over_budget&#x27; as if all spend were in one currency — producing wrong budget alerts (e.g. falsely flagging over-budget, or masking a real overspend) as soon as any expense uses a non-USD currency. The PR description claims &#x27;Reporting is unchanged&#x27;, but the schema/behavior change it introduces breaks the previously-valid invariant that all amount_cents in a sum share a currency.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read reports.py: monthly_summary (lines 22-31) does SUM(amount_cents) GROUP BY category only, with no currency grouping/filter, despite expenses.py:18 now accepting a currency param stored per-row (db.py schema change). Reproduced with actual execution: added a 350 USD and a 350 EUR expense in category &#x27;food&#x27; for the same month; monthly_summary returned {&#x27;food&#x27;: 70000} (i.e. 700.00), conflating two different currencies into one meaningless total. Then set a $500 budget for &#x27;food&#x27; and called budget_status, which returned over_budget: True with remaining: -$200.00 — a false over-budget alert, si</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#8d6e63">MINOR</span>
+  <strong>2. currency parameter is stored without any validation</strong>
+  <div class="loc">ledgerly/expenses.py:18 &middot; robustness</div>
+  <div>Unlike category, which is validated against VALID_CATEGORIES (expenses.py:19-20), the new currency argument is passed straight into the INSERT with no whitelist, format, or normalization check (expenses.py:24-29). Callers can pass an empty string, arbitrary text, mixed case (&#x27;usd&#x27; vs &#x27;USD&#x27;), or overly long strings, all of which are persisted as-is. Because reporting/grouping logic elsewhere in the codebase (and any future currency-aware code) would rely on currency values being consistent codes, this lets inconsistent or garbage values into the expenses table with no error signaled to the caller, unlike every other validated field on this row.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/expenses.py: add_expense (line 18) validates category against VALID_CATEGORIES and note length, but the new currency parameter (added in this PR) is passed directly into the INSERT with no check at all. Reproduced with actual execution: inserting expenses with currency=&#x27;&#x27;, &#x27;usd&#x27;, &#x27;not-a-currency&#x27;, a 500-char string, and an emoji all succeeded and were persisted verbatim (confirmed via get_expense), while category validation correctly rejects invalid values elsewhere in the same function. This is an asymmetry in the actual production code path introduced by this PR, not a missing-</div>
+</div>
+<footer>Pipeline: reviewer_correctness (2) &rarr; reviewer_security (0) &rarr; reviewer_tests (0) &rarr; verifier (2) &middot; 85.6s &middot;
+$0.39 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

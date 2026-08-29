@@ -1,0 +1,82 @@
+{
+  "case": "case21_perf_reports",
+  "system": "agent-v5",
+  "findings": [
+    {
+      "file": "ledgerly/reports.py",
+      "line": 44,
+      "category": "correctness",
+      "severity": "critical",
+      "title": "budget_status sums all-time spend, not month-scoped spend",
+      "description": "The new LEFT JOIN joins expenses to budgets only on user_id and category (`e.user_id = b.user_id AND e.category = b.category`), with no condition on `e.spent_on` matching the requested month. The old code computed spend via `monthly_summary`, which filtered expenses with `substr(spent_on, 1, 7) = ?` (the month param). The rewrite drops that filter entirely, so `spent` is now the lifetime total for the category across all months, not the spend for the queried month. Example: a user sets a $50 food budget for 2026-03, spends $10 in 2026-03 and $60 in 2026-01 (a prior month). `budget_status(db, user, '2026-03')` will report spent=$70 and over_budget=True even though March spend is only $10. This also feeds `notify.run_budget_alerts` (ledgerly/notify.py:54), causing spurious 'over budget' notifications based on unrelated months' spending. This directly contradicts the PR's 'No behavior change intended' claim and the function's docstring ('Compare spend against each budget set for the month').",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/reports.py:37-63: the new SQL LEFT JOINs expenses to budgets only on user_id and category, with no condition tying e.spent_on to the requested month; only budgets.month is filtered. Reproduced with a live sqlite3-backed Database: created a user, a $50 'food' budget for 2026-03, a $10 expense in 2026-03 and a $60 expense in 2026-01. Calling budget_status(db, 1, '2026-03') returned spent='$70.00', remaining='-$20.00', over_budget=True \u2014 i.e. it summed the unrelated January expense into March's total, exactly as the finding describes. Confirmed notify.py imports and calls budget_status inside run_budget_alerts (notify.py:54), so the bug propagates into spurious over-budget notifications as claimed. This directly contradicts the function's docstring and the PR's 'no behavior change' claim.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "ledgerly/db.py",
+      "line": 100,
+      "category": "robustness",
+      "severity": "major",
+      "title": "New index lacks IF NOT EXISTS, causing crash on reopening an existing database file",
+      "description": "SCHEMA is executed via `executescript` every time a `Database` is constructed (ledgerly/db.py:111), and every CREATE TABLE statement uses `IF NOT EXISTS` to make this idempotent for existing files. The new `CREATE INDEX idx_expenses_user_category ON expenses (...)` statement omits `IF NOT EXISTS`. Opening a `Database` a second time against the same on-disk file (e.g. restarting the app against its persistent .db file) will raise `sqlite3.OperationalError: index idx_expenses_user_category already exists`, crashing initialization. In-memory test fixtures (tests/conftest.py:9) never reopen the same connection, so this regression is not caught by the test suite.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/db.py: SCHEMA is executed via executescript() on every Database() construction, and every other DDL statement uses 'CREATE TABLE IF NOT EXISTS', but the new 'CREATE INDEX idx_expenses_user_category' (added in this PR at line 100-101) omits 'IF NOT EXISTS'. Reproduced by executing: create Database('/tmp/test_ledgerly.db'), close it, then construct Database('/tmp/test_ledgerly.db') again \u2014 this raised sqlite3.OperationalError: index idx_expenses_user_category already exists, exactly as claimed. This is a genuine regression introduced by the PR (the index is new) and breaks any real persistent-file usage of the app (e.g., restarting the process against its .db file), not just a theoretical edge case.",
+        "adjusted_severity": "major"
+      }
+    },
+    {
+      "file": "ledgerly/db.py",
+      "line": 110,
+      "category": "robustness",
+      "severity": "major",
+      "title": "synchronous=OFF drops crash-safety durability guarantee",
+      "description": "Setting `PRAGMA synchronous = OFF` disables SQLite's fsync calls on commit, so a power loss or OS crash immediately after a transaction commits can corrupt the database or silently lose committed data (per SQLite docs, this is the one syncing mode where corruption after a crash is possible). Previously, no override was set, meaning SQLite's default (FULL for rollback-journal mode) durability applied. This is applied globally to every `Database` instance, including the on-disk ledger deployments (`db.execute`/`transaction` in ledgerly/db.py:113-120), silently dropping the durability guarantee financial ledger data previously had, in exchange for write speed.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/db.py:105-111: Database.__init__ unconditionally runs `self.conn.execute(\"PRAGMA synchronous = OFF\")` on every connection, regardless of whether `path` is ':memory:' or a real on-disk file \u2014 there is no guard scoping this to non-persistent DBs (grepped repo, only one occurrence). Reproduced with `python3 -c` that this pragma actually takes effect (PRAGMA synchronous returns 0/OFF), confirming SQLite's documented behavior that OFF disables fsync-on-commit and can corrupt the DB or lose committed data on power loss/OS crash. This pragma is unrelated to the PR's stated goal (single-query budget report) and was silently introduced alongside the index addition, applying globally to all Database instances including the on-disk ledger use case the class is designed for (path parameter exists precisely for real file-backed DBs). This is a genuine production code behavior regression, not an advisory/test-coverage complaint.",
+        "adjusted_severity": "major"
+      }
+    }
+  ],
+  "rejected_findings": [],
+  "raw_finding_count": 3,
+  "merged_count": 3,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 3,
+      "seconds": 55.8,
+      "cost_usd": 0.10422920000000002
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 0,
+      "seconds": 44.0,
+      "cost_usd": 0.10589119999999999
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 0,
+      "seconds": 39.1,
+      "cost_usd": 0.1075616
+    },
+    {
+      "stage": "verifier",
+      "in": 3,
+      "confirmed": 3,
+      "seconds": 51.7
+    }
+  ],
+  "seconds": 107.5,
+  "cost_usd": 0.5336
+}

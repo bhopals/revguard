@@ -1,0 +1,65 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Household invite codes</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Household invite codes</h1>
+<div class="sub">Owners can now invite people without knowing their user id: create_invite() issues a short shareable code, accept_invite() joins the caller to the household. Includes schema and tests.</div>
+<span class="verdict" style="background:#c62828">Request changes — 4 confirmed finding(s), 1 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. Invite codes generated with non-cryptographic PRNG</strong>
+  <div class="loc">ledgerly/household.py:91 &middot; security</div>
+  <div>create_invite() uses Python&#x27;s `random.randrange()` (Mersenne Twister, not a CSPRNG) to generate the 6-hex-digit invite code that grants household membership. The codebase&#x27;s own auth.py uses `secrets.token_urlsafe(32)` for session tokens, showing this is the established secure pattern for credential-like values. `random`&#x27;s output is predictable once enough outputs are observed (Mersenne Twister state can be recovered from 624 consecutive 32-bit outputs) and is not suitable for security tokens. An attacker who can observe a sequence of previously issued invite codes (e.g. by creating throwaway households and repeatedly calling create_invite) could reconstruct the PRNG state and predict future invite codes for other households, allowing unauthorized self-invitation into households they were never invited to.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/household.py: create_invite() (line ~91) imports and uses `random.randrange(16**6)` to build the 6-hex invite code stored in invites.code, and accept_invite() grants household membership solely on presenting a matching code. Grepped ledgerly/*.py and confirmed auth.py uses `secrets.token_hex(16)` and `secrets.token_urlsafe(32)` for salts/session tokens — the established secure pattern in this codebase — while household.py instead does `import random` and uses the plain `random` module. Ran python3 to confirm the stdlib `random` module here is backed by `random.Random` (Mersenne T</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>2. accept_invite never marks invite codes as used, so they never expire</strong>
+  <div class="loc">ledgerly/household.py:100 &middot; correctness</div>
+  <div>The invites table has a `used_at` column (ledgerly/db.py:96) implying single-use invite codes, but accept_invite() (household.py:100-115) never sets it after a successful join. As a result, a single invite code remains valid indefinitely and can be accepted by an unlimited number of *different* users (the &#x27;already a member&#x27; check at line 108 only blocks the same user from joining twice, not other users). A code shared once (e.g. pasted in a group chat) lets anyone who sees it join the household at any time in the future, and a removed member could rejoin later using an old code they saved. This contradicts the evident intent of the schema and the PR&#x27;s framing of a &#x27;shareable code&#x27; for onboarding specific invitees.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read household.py: accept_invite() never checks or sets invites.used_at, and only blocks the *same* user from joining twice via the household_members check (line 108), not other users. Reproduced live: created an invite code, had bob accept it, removed bob from the household, then had carol accept the *same* code (succeeded), then had bob rejoin using the *same* stale code after removal (succeeded). Queried invites.used_at afterward — still NULL. This is a genuine logic defect (missing single-use enforcement), not a test-coverage complaint; the existing test suite passes because it never exerc</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>3. accept_invite bypasses the MAX_MEMBERS household size cap</strong>
+  <div class="loc">ledgerly/household.py:108 &middot; correctness</div>
+  <div>add_member() enforces a 12-member cap via `if count &gt;= MAX_MEMBERS: raise HouseholdError(&#x27;household is full&#x27;)` (household.py:59-60), but accept_invite() (lines 100-115) performs no such check before inserting into household_members. A household at capacity can still grow without bound: the owner (or anyone with a leaked/stale code, compounded by the missing used_at invalidation) can have arbitrarily many users call accept_invite() with the same code, each successfully joining regardless of household size. This silently drops a guarantee the existing add_member() path enforces.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read household.py: add_member() (lines 51-67) enforces MAX_MEMBERS=12 via a COUNT query and raises HouseholdError when full. accept_invite() (lines 100-115), added by this PR, only checks for invalid code and existing membership, with no count/cap check before INSERT into household_members. Reproduced via python3: created a household, filled it to exactly 12 members using add_member, verified add_member then correctly raises &#x27;household is full&#x27; for a 13th member, then called accept_invite() with a still-valid invite code for 5 more distinct users — all 5 succeeded, growing household_members to</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>4. test_member_cannot_accept_twice does not test invite-code single-use; masks that used_at is never set</strong>
+  <div class="loc">tests/test_household.py:88 &middot; test-adequacy</div>
+  <div>The `invites` schema (ledgerly/db.py:96) has a `used_at` column implying invite codes are meant to be single-use/consumed, and `accept_invite` (ledgerly/household.py:100-115) never writes to `used_at` or otherwise invalidates a code after use — a code remains valid forever and can be redeemed by any number of distinct new users. The test named `test_member_cannot_accept_twice` (lines 88-93) calls `accept_invite` twice with the SAME code and the SAME user (carol); it only exercises the pre-existing &#x27;already a member&#x27; check at household.py:108-109, which triggers regardless of whether the invite was ever consumed. It never calls `accept_invite(db, code, some_other_new_user)` to check whether a used code can be redeemed again by a different person — the actual scenario that would expose the missing `used_at` enforcement. As written, the test would pass identically even if invite codes were fully reusable across arbitrary users, so it gives false confidence that invites are single-use.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read household.py: create_invite/accept_invite never write or check `used_at` (grep confirms `used_at` appears only in the db.py schema, nowhere else in the codebase). Executed a repro script instantiating Database, registering alice/bob/dave, creating a household+invite, and calling accept_invite(code, bob) then accept_invite(code, dave): both succeeded and both appear as members, proving the same invite code is infinitely reusable across distinct new users. Read tests/test_household.py:88-93: test_member_cannot_accept_twice calls accept_invite twice with the SAME user (carol), which raises H</div>
+</div>
+<footer>Pipeline: reviewer_correctness (2) &rarr; reviewer_security (4) &rarr; reviewer_tests (1) &rarr; verifier (4) &middot; 122.9s &middot;
+$0.70 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

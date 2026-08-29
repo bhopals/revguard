@@ -1,0 +1,67 @@
+{
+  "case": "case10_note_search",
+  "system": "agent-v5",
+  "findings": [
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 68,
+      "category": "security",
+      "title": "SQL injection via unvalidated `sort` column name",
+      "severity": "critical",
+      "description": "The `sort` parameter is interpolated directly into the SQL string with an f-string (`f\" ORDER BY {sort} DESC\"`) without any whitelist check or parameterization. If `sort` is derived from user/caller-supplied input (e.g., a query-string sort parameter in an API layer calling `search_expenses`), an attacker can pass a value like `id; DROP TABLE expenses;--` or, more realistically for SQLite (which typically doesn't support stacked statements via most drivers but does support expression subqueries in ORDER BY), something like `(SELECT CASE WHEN (SELECT substr(password,1,1) FROM users WHERE id=1)='a' THEN id ELSE amount_cents END)` to perform boolean/blind SQL injection and exfiltrate data from other tables, bypassing the user_id scoping entirely. Even without stacked queries, this allows arbitrary expression injection into ORDER BY, enabling data exfiltration from other tables/users. All other query-building code in this file uses parameterized `?` placeholders for values, but none of them interpolate identifiers - this is the first place raw string interpolation is used for SQL structure, and it has no allowlist of valid column names (unlike category/date fields elsewhere).",
+      "reviewer": "security",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/expenses.py: search_expenses (new in this PR) builds SQL as f\"... ORDER BY {sort} DESC\" with sort a plain function parameter (default 'spent_on'), no whitelist, unlike category which is checked against VALID_CATEGORIES elsewhere in the same file. Confirmed via execution: called search_expenses(db, 1, '', sort=\"(SELECT CASE WHEN (SELECT substr(password_hash,1,1) FROM users WHERE id=1)='h' THEN id ELSE amount_cents END)\") against a live sqlite3 DB with a users table containing password_hash, and the injected subquery executed and altered row ordering based on the boolean condition, demonstrating a working blind SQL injection oracle that reads data outside the expenses table/user scope. Stacked DROP TABLE was blocked by the sqlite3 driver (as the finding itself anticipated), but the boolean/blind exfiltration vector works exactly as described. No caller currently exists in the repo, but the function is a new public API surface added by this PR and is unsafe by construction regardless of current callers.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "ledgerly/expenses.py",
+      "line": 63,
+      "category": "robustness",
+      "title": "search_expenses has no pagination, unlike list_expenses",
+      "description": "list_expenses enforces PAGE_SIZE/OFFSET pagination (line 59-60), but search_expenses issues an unbounded query with no LIMIT/OFFSET. A user with many matching expenses (e.g. a common note substring) will have the entire result set loaded into memory and returned in one call, which can grow unbounded as the expenses table grows, unlike every other listing function in this module.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/expenses.py: list_expenses (lines 50-61) applies `LIMIT ? OFFSET ?` with PAGE_SIZE, while the new search_expenses (lines 63-70) builds a query with only `ORDER BY {sort} DESC` and no LIMIT/OFFSET. Confirmed no caller anywhere wraps or paginates the result (grep for search_expenses found only its own definition). Reproduced at runtime: inserted 500 matching expense rows into an in-memory Database and called search_expenses(db, 1, 'coffee') -> returned all 500 rows, while list_expenses(db, 1) on the same data correctly capped at PAGE_SIZE=20. This is a genuine unbounded-query defect in the new function's code, not a test-coverage complaint.",
+        "adjusted_severity": "minor"
+      },
+      "severity": "minor"
+    }
+  ],
+  "rejected_findings": [],
+  "raw_finding_count": 4,
+  "merged_count": 2,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 3,
+      "seconds": 37.5,
+      "cost_usd": 0.06918880000000001
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 1,
+      "seconds": 17.8,
+      "cost_usd": 0.027803799999999997
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 0,
+      "seconds": 27.6,
+      "cost_usd": 0.0610428
+    },
+    {
+      "stage": "verifier",
+      "in": 2,
+      "confirmed": 2,
+      "seconds": 35.5
+    }
+  ],
+  "seconds": 73.0,
+  "cost_usd": 0.3003
+}

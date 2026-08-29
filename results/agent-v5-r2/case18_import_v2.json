@@ -1,0 +1,112 @@
+{
+  "case": "case18_import_v2",
+  "system": "agent-v5",
+  "findings": [
+    {
+      "file": "ledgerly/importers.py",
+      "line": 112,
+      "category": "correctness",
+      "title": "Atomic batch guarantee is broken: each add_expense call commits independently",
+      "severity": "critical",
+      "description": "import_statement wraps the row loop in `with db.transaction():` (line 107) to make the batch all-or-nothing, per its own docstring: 'if any row cannot be imported, no expense from this statement is recorded.' But add_expense() (ledgerly/expenses.py:24) calls db.execute(), and Database.execute() (ledgerly/db.py:126-129) itself wraps the insert in `with self.transaction():`, which calls self.conn.commit() immediately after each successful insert (db.py:113). Since Database uses a single sqlite3 connection with no savepoints, this inner commit commits the *entire* connection state, including all previously-inserted rows from earlier iterations of the same batch. Concrete failure: import a statement where row 1 maps to a valid category (committed and durable) and row 3's category_for() raises ImportError_ (e.g. category_map={'GROCER': 'yachts'} against the STATEMENT fixture, where 'COFFEE CO' is inserted/committed first and then 'GROCER LTD' triggers the exception). import_statement raises, the outer `with db.transaction()` rolls back, but the row-1 expense was already committed by the earlier nested transaction and remains permanently in the database \u2014 producing exactly the half-imported statement the PR claims to prevent. The existing test (test_mapping_to_unknown_category) does not catch this because its category_map matches on the very first data row, so no prior row is ever committed.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read db.py: Database.transaction() (lines 109-116) commits self.conn unconditionally on success, and Database.execute() (126-129) wraps every single insert in its own nested `with self.transaction()`. add_expense() (expenses.py:24) calls db.execute(). Since sqlite3 has one connection and no savepoints are used, each add_expense call inside import_statement's outer `with db.transaction():` loop commits the entire connection state immediately. Reproduced directly: called import_statement(db, user, STATEMENT, category_map={'GROCER': 'yachts'}) which raises ImportError_ on the 2nd data row (GROCER LTD) after the 1st row (COFFEE CO) was already inserted. Post-exception query of the expenses table shows 1 row present (COFFEE CO, category 'other'), proving the row-1 expense survived the outer rollback \u2014 exactly the half-imported statement the docstring claims is prevented. Ran the existing test suite (tests/test_importers.py) and all 9 tests pass, confirming the existing test_mapping_to_unknown_category does not catch this because its category_map ('COFFEE': 'yachts') fails on the very first row, so no prior row is ever committed.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "ledgerly/importers.py",
+      "line": 91,
+      "category": "robustness",
+      "title": "Duplicate detection dropped by description silently discards distinct same-day/same-amount expenses",
+      "severity": "major",
+      "description": "_is_duplicate now matches on (user_id, spent_on, amount_cents) only, having dropped the `note` column from the old query. This means import_statement will silently skip a genuinely new transaction if the user already has *any* expense (manually entered, from a prior unrelated import, or a coincidental match) on the same date with the same amount, regardless of description. Example: user manually logs a $12.50 expense on 2026-03-01 for 'PARKING'; later they import a statement containing an unrelated $12.50 charge on 2026-03-01 for 'COFFEE CO'. The import will treat it as a duplicate, increment `skipped`, and never insert the coffee expense \u2014 silently losing a legitimate transaction with no error or warning to the user, contradicting the old guarantee that only rows matching date+amount+description were treated as duplicates.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/importers.py post-PR: _is_duplicate (line 90-96) now queries only on (user_id, spent_on, amount_cents), dropping the `note`/description column from the WHERE clause that the old version had. Wrote a reproduction script instantiating a Database, manually adding an expense (PARKING, $12.50, 2026-03-01), then calling import_statement with a statement containing an unrelated COFFEE CO row for the same date/amount. Result: imported=0, skipped=1, and only the PARKING row exists in the DB afterward \u2014 the distinct COFFEE CO transaction was silently discarded with no error, exactly as the reviewer described. Existing test suite (tests/test_importers.py) still passes, confirming this scenario is unguarded and unnoticed by current tests. The new module docstring only labels the change as 'faster duplicate detection keyed on (date, amount)' without acknowledging or accepting the correctness tradeoff of dropping unrelated same-day/same-amount transactions, so this is a genuine, reachable, silent data-loss regression rather than documented intended behavior.",
+        "adjusted_severity": "major"
+      }
+    },
+    {
+      "file": "ledgerly/importers.py",
+      "line": 82,
+      "category": "correctness",
+      "title": "category_for is only case-insensitive on the description, not on the mapping prefix",
+      "severity": "major",
+      "description": "The module docstring (lines 8-10) and category_for's own docstring (lines 78-79) promise 'case-insensitive prefix rules' for category mapping. The implementation only calls .upper() on `desc`, not on `prefix`: `if desc.upper().startswith(prefix):`. If a caller supplies a category_map with a lowercase or mixed-case key, e.g. {'coffee': 'food'}, it will never match an uppercase description like 'COFFEE CO' since 'COFFEE CO'.upper() == 'COFFEE CO' does not start with the literal string 'coffee'. Every mapped transaction silently falls through to DEFAULT_CATEGORY ('other') instead of raising or matching, contradicting the documented case-insensitive behavior. The tests only exercise uppercase prefixes ('COFFEE', 'STREAM'), so this gap is not caught.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/importers.py lines 77-87: category_for only calls .upper() on desc, never on prefix, so `if desc.upper().startswith(prefix)` compares an uppercased description against the literal (unmodified) mapping key. Ran `category_for('COFFEE CO', {'coffee': 'food'})` directly, which returned 'other' instead of 'food', while `category_for('COFFEE CO', {'COFFEE': 'food'})` correctly returned 'food'. This directly contradicts the module docstring (lines 8-10) and function docstring (lines 78-79), both of which promise case-insensitive prefix rules. Grepped for any normalization of `prefix`/category_map keys elsewhere (e.g. in expenses.py) and found none. Existing tests only use uppercase keys ('COFFEE', 'STREAM'), so the suite passes despite the bug, matching the reviewer's description exactly. This is a genuine code defect (violates documented contract), not merely a missing-test observation.",
+        "adjusted_severity": "major"
+      }
+    },
+    {
+      "file": "tests/test_importers.py",
+      "line": 68,
+      "category": "test-adequacy",
+      "severity": "critical",
+      "title": "TestAtomicity never exercises a failing/partial batch",
+      "description": "The PR's core promise, stated in the description and the import_statement docstring, is that 'a malformed row no longer leaves a half-imported statement behind' and the batch is 'all-or-nothing'. TestAtomicity.test_atomic_batch (lines 68-74) only imports a fully valid STATEMENT and asserts (imported, skipped) == (3, 0) and imported_count == 3 \u2014 this is a duplicate of the pre-existing TestImport.test_batch_recorded happy-path check and contains no scenario where a row fails partway through the batch. It never constructs a statement where an earlier row succeeds and a later row fails (e.g. via a bad category mapping matching a later description, or any other mid-batch failure), so it can never detect a broken rollback where some expenses from the batch get persisted while others don't. The test class/method name promises atomicity coverage it does not provide.",
+      "reviewer": "tests",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read tests/test_importers.py: TestAtomicity.test_atomic_batch (lines 68-74) only imports a fully-valid STATEMENT and duplicates TestImport.test_batch_recorded; it never triggers a mid-batch failure. I then built the exact scenario the finding describes (a category_map where an early row succeeds and a later row targets an unknown category) and ran it against the real repo: import_statement raised ImportError_ as expected, but 2 of 3 expenses were left committed in the database (expenses before=0, after=2), and a second run confirmed COFFEE/GROCER rows persisted while STREAM's mapping failed. Root cause: add_expense() calls db.execute(), which (ledgerly/db.py:126-129) opens and commits its own transaction per call, so each row commits individually regardless of the outer `with db.transaction():` in import_statement \u2014 the outer rollback has nothing left to undo. This directly falsifies the PR's advertised 'all-or-nothing' guarantee. Full test suite (56 tests) still passes, confirming this real defect is completely unexercised by the test suite as the finding states. This is not a mere 'missing test' advisory \u2014 the test's name/class promises atomicity coverage it doesn't provide, and that gap is exactly what let a broken core feature ship.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "tests/test_importers.py",
+      "line": 62,
+      "category": "test-adequacy",
+      "severity": "critical",
+      "title": "test_mapping_to_unknown_category checks only that an exception is raised, not that the batch rolled back",
+      "description": "This test uses category_map={\"COFFEE\": \"yachts\"} against STATEMENT, where 'COFFEE CO' is the very first row processed, so category_for raises ImportError_ before any prior row in this batch could have been committed \u2014 the test can pass even if rollback is completely broken. Additionally, after catching the raised ImportError_, the test never queries the database to confirm that no expenses were inserted and no import_batches row was created (e.g. via db.query(\"SELECT * FROM expenses...\") or db.query_one(\"SELECT * FROM import_batches...\")). Given a statement where an earlier valid row (e.g. GROCER LTD) is processed and added successfully before a later row triggers the ImportError_ (e.g. a mapping targeting a later description), this test would still pass even if the earlier expense was left committed in the database, because it asserts only that the exception is raised and never inspects post-failure DB state.",
+      "reviewer": "tests",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read tests/test_importers.py: test_mapping_to_unknown_category only asserts pytest.raises(ImportError_) and never queries the DB afterward; STATEMENT's first row is 'COFFEE CO' so the {\"COFFEE\":\"yachts\"} mapping fails on row 1, before any row could be committed, so the test can't detect a broken rollback. Confirmed the reviewer's hypothesized failure mode is real, not just hypothetical, by running python3 -c reproducing import_statement(db, user, STATEMENT, category_map={'STREAM':'yachts'}) (STREAM/STREAMFLIX is the last row): ImportError_ is raised as expected, but querying `expenses` afterward shows COFFEE CO and GROCER LTD were both committed (2 rows), while `import_batches` correctly has none. Root cause: add_expense() calls db.execute(), which itself opens a nested `with self.transaction(): ... conn.commit()`; since sqlite3's connection has only one flat transaction, this nested commit() prematurely commits everything done so far on every row, so the outer transaction's rollback() on exception only undoes work after the last row's commit, not the whole batch. So the 'atomic batches' feature this PR advertises is completely broken for the exact scenario described, and the existing test suite (all 9 tests pass) never catches it. This is a genuine, severe code defect surfaced through test inspection, not merely an advisory 'add more tests' comment.",
+        "adjusted_severity": "critical"
+      }
+    }
+  ],
+  "rejected_findings": [],
+  "raw_finding_count": 5,
+  "merged_count": 5,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 3,
+      "seconds": 95.1,
+      "cost_usd": 0.17159180000000002
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 0,
+      "seconds": 104.9,
+      "cost_usd": 0.31023579999999995
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 2,
+      "seconds": 55.2,
+      "cost_usd": 0.1193486
+    },
+    {
+      "stage": "verifier",
+      "in": 5,
+      "confirmed": 5,
+      "seconds": 129.2
+    }
+  ],
+  "seconds": 234.1,
+  "cost_usd": 1.255
+}

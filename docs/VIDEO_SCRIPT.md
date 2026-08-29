@@ -53,13 +53,21 @@ Show the HTML report (case21_report.html) and the verifier trajectory md.
 
 ## 2:50–3:40 — Results + changelog (README table, then CHANGELOG)
 
-> "Final numbers on the same 22 cases, same model, same scoring rule:
-> [read the table — baseline vs v5: recall, precision, F1, clean-PR
-> false positives]. The changelog is the honest part: v1 — giving the
-> agent tools but a conservative brief — was WORSE than the baseline.
-> The single biggest gain came from re-layering: reviewers tuned for
-> recall, verifier owning precision. And we removed an experiment: a
-> nitpick reviewer that [what the v4 data showed]."
+> "Final numbers, same 22 cases, same model, same scoring rule. On the
+> large tier-3 PRs the pipeline wins everything: F1 0.930 versus 0.884,
+> recall 0.91 versus 0.86, one false positive versus two. On small PRs
+> the baseline is saturated at 39 out of 39 — we report that instead of
+> hiding it: the base model has solved small-diff review. And
+> stability: we ran both systems twice — the pipeline's numbers were
+> IDENTICAL both runs, three false positives each time, while the
+> baseline's false positives tripled from six to eighteen. The
+> changelog is the honest part: v1 — tools plus a conservative brief —
+> was WORSE than the baseline. The biggest gain came from re-layering:
+> reviewers tuned for recall, verifier owning precision. And the
+> experiment we removed — a nitpick reviewer — taught the opposite of
+> the expected lesson: it found eleven defects the specialists missed,
+> because its brief was permissive. We removed the lane and kept the
+> permissiveness."
 
 ## 3:40–4:20 — Real-world workflow (terminal)
 

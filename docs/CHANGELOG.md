@@ -36,6 +36,19 @@ result #1 of this project. Human time comparison: a careful human review
 of a tier-3 PR is 30–60 minutes; both systems run in ~1–2 minutes for
 under a dollar.
 
+**Stability (both systems run twice end-to-end, nothing cached):**
+
+| run | baseline F1 | baseline FPs | v5 F1 | v5 FPs |
+|---|---|---|---|---|
+| 1 | 0.928 | 6 | 0.887 | 3 |
+| 2 | 0.847 | 18 | 0.887 | 3 |
+
+v5's numbers are identical across runs; the baseline's false positives
+tripled. The noise users hate in AI review bots shows up here as run
+variance, and the policy-gated verifier is what removes it. On
+mean-of-runs the systems tie overall (0.888 vs 0.887) while v5 wins
+tier 3 (0.930/0.933 vs 0.884/0.889) and the noise column outright.
+
 ## Baseline — one prompt, diff inline, no tools
 
 The realistic "what people do today": paste the diff into the model and

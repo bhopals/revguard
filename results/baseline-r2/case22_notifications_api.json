@@ -1,0 +1,49 @@
+{
+  "case": "case22_notifications_api",
+  "system": "baseline",
+  "findings": [
+    {
+      "file": "ledgerly/api.py",
+      "line": 146,
+      "category": "security",
+      "severity": "critical",
+      "title": "IDOR: any user can read another user's notifications",
+      "description": "get_notifications() takes user_id from request.params and falls back to request.user_id only if absent, so an authenticated caller can pass ?user_id=<other> to read any other user's notification list. There is no check that the requested user_id matches the authenticated request.user_id, exposing private spending/budget notification content across accounts."
+    },
+    {
+      "file": "ledgerly/api.py",
+      "line": 154,
+      "category": "security",
+      "severity": "major",
+      "title": "IDOR: notification_id ownership not verified before marking read",
+      "description": "post_notification_read() updates notifications by id alone, with no WHERE user_id = request.user_id clause and no check that the notification belongs to the caller. Any authenticated user can mark (and effectively suppress/dismiss) any other user's notifications by guessing/enumerating small integer ids."
+    },
+    {
+      "file": "ledgerly/notify.py",
+      "line": 92,
+      "category": "correctness",
+      "severity": "critical",
+      "title": "Digest is marked read immediately after being queued",
+      "description": "send_weekly_digests() calls notify(db, uid, \"digest\", body) and then immediately runs UPDATE notifications SET read_at = ? WHERE user_id = ? with no id filter, which marks the just-inserted digest (and every other pending notification for that user, e.g. unseen budget alerts) as read in the same pass. Since GET /notifications only returns unread(), users will never see the weekly digest or any notification queued before the job ran \u2014 the feature is effectively non-functional and silently drops other pending alerts."
+    },
+    {
+      "file": "ledgerly/notify.py",
+      "line": 88,
+      "category": "robustness",
+      "severity": "minor",
+      "title": "No per-user error isolation in digest job",
+      "description": "The loop over all users has no try/except around monthly_summary/notify/db.execute; a single user with bad data (e.g. missing report data causing an exception) will abort the entire scheduled job, leaving all subsequent users without a digest for that run, with no partial-progress tracking or logging."
+    },
+    {
+      "file": "tests/test_notify.py",
+      "line": 50,
+      "category": "test-adequacy",
+      "severity": "major",
+      "title": "Tautological assertion hides digest-unread bug",
+      "description": "`assert any(n[\"kind\"] == \"digest\" for n in unread(db, user)) or True` always evaluates to True regardless of the any() result, so this line can never fail. It gives the false impression that the test verifies the digest appears in the user's unread notifications, while actually not checking anything \u2014 masking the bug where send_weekly_digests immediately marks the digest as read."
+    }
+  ],
+  "seconds": 53.4,
+  "cost_usd": 0.0677928,
+  "num_turns": 1
+}

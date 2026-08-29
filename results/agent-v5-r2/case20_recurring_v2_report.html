@@ -1,0 +1,58 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Recurring rules: biweekly cadence and pause/resume</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Recurring rules: biweekly cadence and pause/resume</h1>
+<div class="sub">Adds the two most requested recurring-rule features: a biweekly cadence (every second week on a weekday) and pause/resume so users can suspend a subscription rule while keeping its history. Tests included for both.</div>
+<span class="verdict" style="background:#c62828">Request changes — 3 confirmed finding(s), 2 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. Biweekly cadence fires every week, not every second week</strong>
+  <div class="loc">ledgerly/recurring.py:106 &middot; correctness</div>
+  <div>The `biweekly` branch of `occurrences_between` (lines 106-111) is a verbatim copy of the `weekly` branch: it appends every date whose weekday matches `rule[&quot;weekday&quot;]` within (start, end], with no logic to skip alternate weeks or any anchor date to establish week parity. For example, `occurrences_between({&quot;cadence&quot;: &quot;biweekly&quot;, &quot;weekday&quot;: 0}, date(2026,3,2), date(2026,3,23))` returns `[2026-03-09, 2026-03-16, 2026-03-23]` — three consecutive Mondays — instead of alternating occurrences like `[2026-03-09, 2026-03-23]`. Since `materialize_due` calls this function to decide which expenses to create, a user&#x27;s &#x27;biweekly&#x27; subscription rule will be charged every week, doubling the intended amount. The included test (`test_biweekly_occurrence`) only checks an 8-day window containing a single matching weekday, so it cannot detect that alternate weeks aren&#x27;t skipped, masking the bug.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/recurring.py:100-112: the biweekly branch is identical logic to the weekly branch (only a comment differs), with no anchor date or week-parity check. Ran `occurrences_between({&#x27;cadence&#x27;:&#x27;biweekly&#x27;,&#x27;weekday&#x27;:0}, date(2026,3,2), date(2026,3,23))` and got `[2026-03-09, 2026-03-16, 2026-03-23]` — three consecutive Mondays, matching the finding exactly, instead of skipping alternate weeks. Also ran the included test_biweekly_occurrence, which passes because its 8-day window only contains one Monday and thus cannot distinguish weekly from biweekly cadence. Since materialize_due uses oc</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>2. Biweekly test window too narrow to distinguish biweekly from weekly cadence</strong>
+  <div class="loc">tests/test_recurring.py:69 &middot; test-adequacy</div>
+  <div>test_biweekly_occurrence checks occurrences_between with a &#x27;biweekly&#x27; rule over the window date(2026,3,2) to date(2026,3,10) — only 8 days, containing exactly one Monday (2026-03-09). But the new &#x27;biweekly&#x27; branch in recurring.py (lines 106-111) is functionally identical to the existing &#x27;weekly&#x27; branch: it fires on every matching weekday in range with no every-other-week skipping logic (the only difference is a `# biweekly` comment on line 109). The sibling test TestOccurrences.test_weekly (test_recurring.py:36-40) uses the wider window date(2026,3,2) to date(2026,3,16) and asserts both 2026-03-09 and 2026-03-16 fire — proving that with a two-Monday window the current (non-biweekly) implementation would return both dates, which a correct biweekly rule should not do. Because test_biweekly_occurrence&#x27;s window contains only a single occurrence of the target weekday, it cannot expose the missing skip-every-other-week logic: it passes identically whether the cadence branch actually implements biweekly semantics or just duplicates weekly filtering. The PR&#x27;s headline feature (biweekly cadence) is therefore not actually verified by any test.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/recurring.py:106-111: the &#x27;biweekly&#x27; branch is logically identical to the &#x27;weekly&#x27; branch (only a comment differs), with no every-other-week skip logic. Ran recurring.occurrences_between with a biweekly rule over a 6-week window (2026-03-02 to 2026-04-13): it fired on all 6 Mondays, identical to what a weekly rule would produce, proving the cadence is non-functional. The PR&#x27;s test_biweekly_occurrence uses an 8-day window containing only one Monday, so it passes regardless of whether skip-logic exists; ran the full test suite (pytest tests/test_recurring.py) and all 12 tests pass </div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>3. resume_rule backfills charges accrued during the pause window, contradicting its own docstring</strong>
+  <div class="loc">ledgerly/recurring.py:64 &middot; correctness</div>
+  <div>`resume_rule`&#x27;s docstring promises &#x27;charging resumes from now&#x27;, implying occurrences during the paused period are not materialized. However, `pause_rule` and `resume_rule` only toggle the `active` flag and never touch `last_materialized` (lines 58-60, 66-68). `materialize_due` (lines 125-140) computes occurrences from `rule[&quot;last_materialized&quot;]` (the last time it ran) to `today`, regardless of any pause in between. Concrete scenario: a monthly rule is materialized on 2026-03-06 (last_materialized=&#x27;2026-03-06&#x27;), then paused for two months, then resumed, then `materialize_due` is called on 2026-06-06. Because `last_materialized` still holds the pre-pause date, `occurrences_between` returns the April 5 and May 5 occurrences that fell entirely within the paused window, and both get materialized as real expenses alongside the June 5 occurrence — i.e. the user is retroactively charged for the period they explicitly paused, directly contradicting the &#x27;charging resumes from now&#x27; guarantee. The included test (`test_resume_reactivates`) never calls `materialize_due` before pausing, so `last_materialized` is still None when resumed, hitting the &#x27;first run&#x27; fallback path and hiding this bug.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/recurring.py: pause_rule/resume_rule (lines 55-68) only toggle the active flag and never touch last_materialized; materialize_due (115-141) computes occurrences from rule[&#x27;last_materialized&#x27;] to today regardless of pause state. Reproduced the exact scenario from the finding with python3 -c: created a monthly rule, materialized on 2026-03-06 (last_materialized becomes &#x27;2026-03-06&#x27;), paused the rule, confirmed materialize_due during the pause creates 0 rows (active=0 filter), resumed the rule, then called materialize_due on 2026-06-06. Result: 3 new expenses created — spent_on 2026</div>
+</div>
+<footer>Pipeline: reviewer_correctness (2) &rarr; reviewer_security (0) &rarr; reviewer_tests (1) &rarr; verifier (3) &middot; 130.4s &middot;
+$0.68 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

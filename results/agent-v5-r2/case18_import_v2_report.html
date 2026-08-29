@@ -1,0 +1,72 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGuard review: Importer v2: category mapping and atomic batches</title>
+<style>
+:root { color-scheme: light dark; --fg: #1c1c1c; --bg: #fbfaf8; --card: #fff;
+  --muted: #666; --line: #e3ded6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e6e3; --bg: #16181d;
+  --card: #1f232b; --muted: #9aa0a6; --line: #333944; } }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  color: var(--fg); background: var(--bg); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 28px; }
+.verdict { display: inline-block; padding: 6px 14px; border-radius: 6px;
+  font-weight: 600; margin: 12px 0 24px; color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.sev { display: inline-block; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 2px 8px;
+  margin-right: 8px; vertical-align: 2px; }
+.loc { font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--muted); margin: 6px 0 10px; }
+.ev { border-left: 3px solid var(--line); padding: 6px 12px; margin-top: 12px;
+  color: var(--muted); font-size: 13.5px; }
+.ev b { color: var(--fg); }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+</style></head><body><main>
+<h1>Code review: Importer v2: category mapping and atomic batches</h1>
+<div class="sub">Statement import learns two things users kept asking for: map merchant descriptions to categories (case-insensitive prefix rules, e.g. &#x27;COFFEE&#x27; -&gt; food), and all-or-nothing batches so a bad row no longer leaves a half-imported statement. Duplicate detection was also simplified and sped up by keying on (date, amount).</div>
+<span class="verdict" style="background:#c62828">Request changes — 5 confirmed finding(s), 3 critical</span>
+
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>1. Atomic batch guarantee is broken: each add_expense call commits independently</strong>
+  <div class="loc">ledgerly/importers.py:112 &middot; correctness</div>
+  <div>import_statement wraps the row loop in `with db.transaction():` (line 107) to make the batch all-or-nothing, per its own docstring: &#x27;if any row cannot be imported, no expense from this statement is recorded.&#x27; But add_expense() (ledgerly/expenses.py:24) calls db.execute(), and Database.execute() (ledgerly/db.py:126-129) itself wraps the insert in `with self.transaction():`, which calls self.conn.commit() immediately after each successful insert (db.py:113). Since Database uses a single sqlite3 connection with no savepoints, this inner commit commits the *entire* connection state, including all previously-inserted rows from earlier iterations of the same batch. Concrete failure: import a statement where row 1 maps to a valid category (committed and durable) and row 3&#x27;s category_for() raises ImportError_ (e.g. category_map={&#x27;GROCER&#x27;: &#x27;yachts&#x27;} against the STATEMENT fixture, where &#x27;COFFEE CO&#x27; is inserted/committed first and then &#x27;GROCER LTD&#x27; triggers the exception). import_statement raises, the outer `with db.transaction()` rolls back, but the row-1 expense was already committed by the earlier nested transaction and remains permanently in the database — producing exactly the half-imported statement the PR claims to prevent. The existing test (test_mapping_to_unknown_category) does not catch this because its category_map matches on the very first data row, so no prior row is ever committed.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read db.py: Database.transaction() (lines 109-116) commits self.conn unconditionally on success, and Database.execute() (126-129) wraps every single insert in its own nested `with self.transaction()`. add_expense() (expenses.py:24) calls db.execute(). Since sqlite3 has one connection and no savepoints are used, each add_expense call inside import_statement&#x27;s outer `with db.transaction():` loop commits the entire connection state immediately. Reproduced directly: called import_statement(db, user, STATEMENT, category_map={&#x27;GROCER&#x27;: &#x27;yachts&#x27;}) which raises ImportError_ on the 2nd data row (GROCER</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>2. TestAtomicity never exercises a failing/partial batch</strong>
+  <div class="loc">tests/test_importers.py:68 &middot; test-adequacy</div>
+  <div>The PR&#x27;s core promise, stated in the description and the import_statement docstring, is that &#x27;a malformed row no longer leaves a half-imported statement behind&#x27; and the batch is &#x27;all-or-nothing&#x27;. TestAtomicity.test_atomic_batch (lines 68-74) only imports a fully valid STATEMENT and asserts (imported, skipped) == (3, 0) and imported_count == 3 — this is a duplicate of the pre-existing TestImport.test_batch_recorded happy-path check and contains no scenario where a row fails partway through the batch. It never constructs a statement where an earlier row succeeds and a later row fails (e.g. via a bad category mapping matching a later description, or any other mid-batch failure), so it can never detect a broken rollback where some expenses from the batch get persisted while others don&#x27;t. The test class/method name promises atomicity coverage it does not provide.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read tests/test_importers.py: TestAtomicity.test_atomic_batch (lines 68-74) only imports a fully-valid STATEMENT and duplicates TestImport.test_batch_recorded; it never triggers a mid-batch failure. I then built the exact scenario the finding describes (a category_map where an early row succeeds and a later row targets an unknown category) and ran it against the real repo: import_statement raised ImportError_ as expected, but 2 of 3 expenses were left committed in the database (expenses before=0, after=2), and a second run confirmed COFFEE/GROCER rows persisted while STREAM&#x27;s mapping failed. R</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#c62828">CRITICAL</span>
+  <strong>3. test_mapping_to_unknown_category checks only that an exception is raised, not that the batch rolled back</strong>
+  <div class="loc">tests/test_importers.py:62 &middot; test-adequacy</div>
+  <div>This test uses category_map={&quot;COFFEE&quot;: &quot;yachts&quot;} against STATEMENT, where &#x27;COFFEE CO&#x27; is the very first row processed, so category_for raises ImportError_ before any prior row in this batch could have been committed — the test can pass even if rollback is completely broken. Additionally, after catching the raised ImportError_, the test never queries the database to confirm that no expenses were inserted and no import_batches row was created (e.g. via db.query(&quot;SELECT * FROM expenses...&quot;) or db.query_one(&quot;SELECT * FROM import_batches...&quot;)). Given a statement where an earlier valid row (e.g. GROCER LTD) is processed and added successfully before a later row triggers the ImportError_ (e.g. a mapping targeting a later description), this test would still pass even if the earlier expense was left committed in the database, because it asserts only that the exception is raised and never inspects post-failure DB state.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read tests/test_importers.py: test_mapping_to_unknown_category only asserts pytest.raises(ImportError_) and never queries the DB afterward; STATEMENT&#x27;s first row is &#x27;COFFEE CO&#x27; so the {&quot;COFFEE&quot;:&quot;yachts&quot;} mapping fails on row 1, before any row could be committed, so the test can&#x27;t detect a broken rollback. Confirmed the reviewer&#x27;s hypothesized failure mode is real, not just hypothetical, by running python3 -c reproducing import_statement(db, user, STATEMENT, category_map={&#x27;STREAM&#x27;:&#x27;yachts&#x27;}) (STREAM/STREAMFLIX is the last row): ImportError_ is raised as expected, but querying `expenses` afterwa</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>4. Duplicate detection dropped by description silently discards distinct same-day/same-amount expenses</strong>
+  <div class="loc">ledgerly/importers.py:91 &middot; robustness</div>
+  <div>_is_duplicate now matches on (user_id, spent_on, amount_cents) only, having dropped the `note` column from the old query. This means import_statement will silently skip a genuinely new transaction if the user already has *any* expense (manually entered, from a prior unrelated import, or a coincidental match) on the same date with the same amount, regardless of description. Example: user manually logs a $12.50 expense on 2026-03-01 for &#x27;PARKING&#x27;; later they import a statement containing an unrelated $12.50 charge on 2026-03-01 for &#x27;COFFEE CO&#x27;. The import will treat it as a duplicate, increment `skipped`, and never insert the coffee expense — silently losing a legitimate transaction with no error or warning to the user, contradicting the old guarantee that only rows matching date+amount+description were treated as duplicates.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/importers.py post-PR: _is_duplicate (line 90-96) now queries only on (user_id, spent_on, amount_cents), dropping the `note`/description column from the WHERE clause that the old version had. Wrote a reproduction script instantiating a Database, manually adding an expense (PARKING, $12.50, 2026-03-01), then calling import_statement with a statement containing an unrelated COFFEE CO row for the same date/amount. Result: imported=0, skipped=1, and only the PARKING row exists in the DB afterward — the distinct COFFEE CO transaction was silently discarded with no error, exactly as the</div>
+</div>
+<div class="card">
+  <span class="sev" style="background:#e65100">MAJOR</span>
+  <strong>5. category_for is only case-insensitive on the description, not on the mapping prefix</strong>
+  <div class="loc">ledgerly/importers.py:82 &middot; correctness</div>
+  <div>The module docstring (lines 8-10) and category_for&#x27;s own docstring (lines 78-79) promise &#x27;case-insensitive prefix rules&#x27; for category mapping. The implementation only calls .upper() on `desc`, not on `prefix`: `if desc.upper().startswith(prefix):`. If a caller supplies a category_map with a lowercase or mixed-case key, e.g. {&#x27;coffee&#x27;: &#x27;food&#x27;}, it will never match an uppercase description like &#x27;COFFEE CO&#x27; since &#x27;COFFEE CO&#x27;.upper() == &#x27;COFFEE CO&#x27; does not start with the literal string &#x27;coffee&#x27;. Every mapped transaction silently falls through to DEFAULT_CATEGORY (&#x27;other&#x27;) instead of raising or matching, contradicting the documented case-insensitive behavior. The tests only exercise uppercase prefixes (&#x27;COFFEE&#x27;, &#x27;STREAM&#x27;), so this gap is not caught.</div>
+  <div class="ev"><b>Verified (high confidence):</b> Read ledgerly/importers.py lines 77-87: category_for only calls .upper() on desc, never on prefix, so `if desc.upper().startswith(prefix)` compares an uppercased description against the literal (unmodified) mapping key. Ran `category_for(&#x27;COFFEE CO&#x27;, {&#x27;coffee&#x27;: &#x27;food&#x27;})` directly, which returned &#x27;other&#x27; instead of &#x27;food&#x27;, while `category_for(&#x27;COFFEE CO&#x27;, {&#x27;COFFEE&#x27;: &#x27;food&#x27;})` correctly returned &#x27;food&#x27;. This directly contradicts the module docstring (lines 8-10) and function docstring (lines 78-79), both of which promise case-insensitive prefix rules. Grepped for any normalization of `prefix`/ca</div>
+</div>
+<footer>Pipeline: reviewer_correctness (3) &rarr; reviewer_security (0) &rarr; reviewer_tests (2) &rarr; verifier (5) &middot; 234.1s &middot;
+$1.25 &middot; generated by RevGuard — every
+finding above survived an adversarial verification agent instructed to
+disprove it.</footer>
+</main></body></html>

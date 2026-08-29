@@ -108,13 +108,22 @@ misleading tests):
 | baseline (same model, 1 prompt) | 19/22 | 0.86 | 0.90 | 0.884 | 2 |
 | **RevGuard v5** | **20/22** | **0.91** | **0.95** | **0.930** | **1** |
 
-Across all 22 cases: baseline F1 0.928 with 6 false positives; v5 F1
-0.887 with 3 — the overall gap is entirely the saturated small-PR tier.
-Neither system ever flagged anything on the two clean PRs. A tier-3
-review costs v5 ~2 minutes and ~$0.50 against 30–60 minutes of a senior
-engineer's attention. Every cell traces to a JSON under `results/`;
-`make eval` regenerates the table, and `docs/dashboard.html` renders the
-full per-case grid.
+**3. The pipeline is stable; the baseline is not.** Both systems were
+run twice end-to-end (fresh runs, nothing cached). v5 produced
+*identical* overall numbers both times — F1 0.887, exactly 3 false
+positives — and tier-3 F1 of 0.930 / 0.933. The baseline held its recall
+but its false positives **tripled between runs** (6 → 18; overall F1
+0.928 → 0.847, mean 0.888). Run-to-run noise is the "bot that cries
+wolf" failure mode showing up as variance, and the policy-gated verifier
+is what pins it down. On mean-of-runs the two systems tie overall
+(0.887 vs 0.888) while v5 wins tier-3 (0.93 vs 0.887) and noise
+(3±0 vs 12±6 false positives).
+
+Neither system ever flagged anything on the two clean PRs, in any run.
+A tier-3 review costs v5 ~2 minutes and ~$0.50 against 30–60 minutes of
+a senior engineer's attention. Every cell traces to a JSON under
+`results/`; `make eval` regenerates the table, and `docs/dashboard.html`
+renders the full per-case grid across all eight runs.
 
 Characteristic difference in *behavior*, not just numbers: when the
 baseline can't confirm a suspicion from the diff alone, it hedges —

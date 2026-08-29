@@ -1,0 +1,97 @@
+{
+  "case": "case17_api_export",
+  "system": "agent-v5",
+  "findings": [
+    {
+      "file": "ledgerly/api.py",
+      "line": 176,
+      "category": "correctness",
+      "title": "Household expense amount parsed with float arithmetic instead of parse_money, causing off-by-one-cent errors",
+      "severity": "major",
+      "description": "post_household_expense converts the amount with `int(float(request.body[\"amount\"]) * 100)` instead of using the existing `parse_money` helper (used by post_expense and post_budget). Binary floating point cannot represent many decimal fractions exactly, so e.g. `float(\"9.99\") * 100` evaluates to 998.9999999999999, and `int()` truncates it to 998 cents ($9.98) instead of 999 ($9.99). Money for shared/household expenses is silently short-changed by a cent for many common inputs (9.99, 19.99, 29.99, etc.), which then corrupts `household.balances()` totals and settlement calculations that assume exact integer cents.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/api.py:176, confirmed it uses `int(float(request.body[\"amount\"]) * 100)` instead of the `parse_money` helper used elsewhere. Verified via Python execution: while the reviewer's specific cited example (float('9.99')*100 == 999.0, rounds correctly) was slightly inaccurate, a sweep of all cent values from 0.00 to 199.99 showed 1145/20000 values truncate incorrectly by exactly one cent (e.g. '0.29'->28, '19.99'->1998, '2.01'->200), whereas ledgerly.utils.parse_money correctly returns 29, 1999, 201 for the same inputs. Confirmed household.add_shared_expense stores amount_cents directly and household.balances() computes net positions from these stored cents, so the truncation propagates into balance/settlement totals as described. The core defect (float-based truncation causing off-by-one-cent errors for many common amounts, bypassing the existing exact parse_money helper) is real and reproducible, even though the single illustrative number in the description was imprecise.",
+        "adjusted_severity": "major"
+      }
+    },
+    {
+      "file": "ledgerly/api.py",
+      "line": 156,
+      "category": "security",
+      "severity": "critical",
+      "title": "Household balances endpoint missing membership authorization check",
+      "description": "get_household_balances (ledgerly/api.py:156-169) takes a household_id from query params and calls household.balances(db, hid) directly without ever verifying that request.user_id is a member of that household (contrast with post_household_expense at line 172, which correctly calls household.add_shared_expense -> require_member). Any authenticated user can supply an arbitrary/guessed household_id (small sequential integers) and read the full list of member user_ids and their net financial balances for a household they do not belong to, leaking other users' financial data. This is an IDOR / broken object-level authorization vulnerability introduced by this PR.",
+      "reviewer": "security",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/api.py:156-169 (get_household_balances) and ledgerly/household.py \u2014 neither calls require_member; household.balances() only checks members_of() to build the response, never checks the requesting user. Grepped for require_member usage across ledgerly/*.py: only used in remove_member and add_shared_expense, never in the balances path. Reproduced live: created household with alice (owner) and bob, added a $10 shared expense, then logged in as carol (a registered user with no membership in that household) and called GET /household/balances?household_id=<hid> with carol's own valid bearer token. Result: status 200 with full balance data {'balances': [{'user_id': 1 (alice), 'net_cents': 500}, {'user_id': 2 (bob), 'net_cents': -500}]} \u2014 carol successfully read other users' private financial data and user_ids for a household she does not belong to. This confirms the IDOR exactly as described, and contrasts with post_household_expense which correctly enforces require_member via add_shared_expense.",
+        "adjusted_severity": "critical"
+      }
+    },
+    {
+      "file": "ledgerly/api.py",
+      "line": 200,
+      "category": "correctness",
+      "title": "CSV export does not escape/quote fields, corrupting rows when note contains a comma or newline",
+      "severity": "major",
+      "description": "get_export builds each CSV line via plain string interpolation `f\"{r['spent_on']},{r['category']},{amount},{r['note']}\"` with no quoting or escaping. `note` is free-form user text up to 500 characters (see expenses.add_expense/MAX_NOTE_LEN) with no character restrictions. If a note contains a comma (e.g. \"coffee, lunch\"), the resulting line has five comma-separated fields instead of four, shifting/breaking any downstream CSV parser's column alignment. If a note contains a newline, the note content is split across CSV lines, producing a bogus extra row that doesn't match the declared `spent_on,category,amount,note` header schema. This breaks the endpoint's documented purpose of producing valid CSV output for arbitrary user expenses.",
+      "reviewer": "correctness",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Read ledgerly/api.py:187-202 (get_export) and ledgerly/expenses.py (add_expense/MAX_NOTE_LEN=500, no character restriction). Reproduced with executable script: registered a user, added an expense with note='coffee, lunch', called GET /export, and parsed the resulting body with Python's csv module \u2014 header row has 4 fields but the data row parses into 5 fields (['2026-03-01','food','12.50','coffee',' lunch']), confirming column misalignment. Also added an expense with note='line1\\nline2' and confirmed the exported body splits into 3 lines instead of 2 (a bogus extra row). Ran full test suite (55 passed) \u2014 the PR's own new test_export_csv uses a comma/newline-free note so it never exercises this path. The finding accurately describes reachable, unescaped CSV construction via plain f-string interpolation with no quoting library used anywhere in the codebase.",
+        "adjusted_severity": "major"
+      }
+    },
+    {
+      "file": "tests/test_api.py",
+      "line": 93,
+      "category": "test-adequacy",
+      "severity": "minor",
+      "title": "Household-expense test uses only a round dollar amount, hiding the float-conversion bug in the new handler",
+      "description": "post_household_expense (ledgerly/api.py:176) converts the amount with `int(float(request.body[\"amount\"]) * 100)` instead of the existing `parse_money` helper used elsewhere. This raw float multiplication is prone to precision loss for many two-decimal amounts (e.g. `float(\"19.99\") * 100 == 1998.9999999999998`, so `int(...)` truncates to 1998 instead of 1999). test_balances_for_own_household only ever exercises amount \"10.00\", a value with an exact binary float representation, so the resulting net_cents (500/-500) can never reveal the truncation bug. A test using a value like \"19.99\" or \"0.29\" would fail against the current implementation, but the chosen input silently passes regardless of whether the conversion is correct.",
+      "reviewer": "tests",
+      "verification": {
+        "verdict": "CONFIRMED",
+        "confidence": "high",
+        "evidence": "Reproduced directly: python3 -c confirms float('19.99')*100 == 1998.9999999999998, so int(...) truncates to 1998 instead of 1999 cents, while float('10.00')*100 == 1000.0 exactly. Confirmed ledgerly/utils.py's parse_money uses correct string-based parsing (splits on decimal, no float multiplication) and is used everywhere else (post_expense, post_budget), but post_household_expense in api.py:176 bypasses it with raw `int(float(request.body[\"amount\"]) * 100)`. Empirically modified the test to use amount \"19.99\" with expected net_cents 1999/-1999 and reran pytest: it failed with actual net_cents of 999 (i.e., 1998 split across 2 members), proving the truncation bug is real and reachable through the actual test path. Restored the original test file afterward; full suite (9 tests) passes as before. This is a genuine defect in shipped handler code (inconsistent/incorrect money parsing vs. the established parse_money helper), not merely an advisory 'add more tests' comment \u2014 the test-adequacy framing just describes why it wasn't caught.",
+        "adjusted_severity": "minor"
+      }
+    }
+  ],
+  "rejected_findings": [],
+  "raw_finding_count": 6,
+  "merged_count": 4,
+  "stages": [
+    {
+      "stage": "reviewer_correctness",
+      "findings": 3,
+      "seconds": 75.7,
+      "cost_usd": 0.14877020000000002
+    },
+    {
+      "stage": "reviewer_security",
+      "findings": 2,
+      "seconds": 36.6,
+      "cost_usd": 0.09209320000000001
+    },
+    {
+      "stage": "reviewer_tests",
+      "findings": 1,
+      "seconds": 61.2,
+      "cost_usd": 0.1264508
+    },
+    {
+      "stage": "verifier",
+      "in": 4,
+      "confirmed": 4,
+      "seconds": 83.4
+    }
+  ],
+  "seconds": 159.1,
+  "cost_usd": 0.7402
+}
