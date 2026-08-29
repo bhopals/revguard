@@ -6,6 +6,10 @@ Everything in this repository — code, benchmark, prompts, docs — was
 created during the event (see git history). Pre-existing components used:
 Python 3.12, pytest, and the Claude Code CLI as the agent runtime.
 
+> **New here?** Read [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md) for a full
+> plain-English tour of every file and how the pipeline works step by step,
+> then [docs/DEMO.md](docs/DEMO.md) for copy-paste commands to run it live.
+
 ## The user and the bottleneck
 
 The intended user is an engineering team where **senior reviewers are the
