@@ -93,7 +93,7 @@ def main():
 <body><main>
 <h1>RevGuard — seeded-defect benchmark results</h1>
 <p class="note">22 PR cases against the Ledgerly codebase (tiers 1-2: small
-PRs, tier 3: large multi-file PRs on the expanded app), 59 anchor-labeled
+PRs, tier 3: large multi-file PRs on the expanded app), 61 anchor-labeled
 defects, 2 clean PRs. All systems run the same model; matching rule fixed in
 eval/score.py. Every number traces to a JSON file in results/.</p>
 <h2>System comparison</h2>
