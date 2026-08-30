@@ -120,9 +120,6 @@ no server) that reads the committed `results/` and `trajectories/`. Three views:
   commands it ran, the crash it reproduced, its verdict — plus the noise it
   threw out. Rebuild anytime with `make console`.
 
-Open `docs/console.html` from a clone, or the hosted copy:
-**https://claude.ai/code/artifact/620d5e10-a5d2-4ee1-91d4-1ae741193ca9**
-
 ## Results
 
 Three findings, in order of importance:
