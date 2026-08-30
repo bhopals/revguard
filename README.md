@@ -106,6 +106,20 @@ refined in two documented adjudication rounds (`docs/CHANGELOG.md`);
 both rounds raised the *baseline's* score, which is how you know they
 were honest.
 
+## The Console — explore every run, finding, and verification
+
+`docs/console.html` is a self-contained interactive UI (open it in any browser,
+no server) that reads the committed `results/` and `trajectories/`. Three views:
+
+- **Overview** — the scoreboard: every system on the same 22 cases, the tier-3
+  win, and the honest overall-F1 nuance.
+- **Cases & findings** — all 22 PRs; open one for its diff, what each system
+  found, and the ground-truth bugs (caught / missed).
+- **Verification traces** — the part no other review tool shows: pick a finding
+  and watch the adversarial verifier's actual attempt to disprove it — the
+  commands it ran, the crash it reproduced, its verdict — plus the noise it
+  threw out. Rebuild anytime with `make console`.
+
 ## Results
 
 Three findings, in order of importance:

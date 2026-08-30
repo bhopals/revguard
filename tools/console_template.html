@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>RevGuard Console</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+:root{
+  --ink:#0e1013; --panel:#15181e; --panel2:#1c2029; --panel3:#232833;
+  --line:#2a2f3a; --line2:#333a47;
+  --fg:#e7eaee; --muted:#8b94a3; --faint:#5c6472;
+  --accent:#4fd6c9; --accent-dim:#2a6f6a; --accent-ink:#0b1817;
+  --crit:#ff6b6b; --major:#f5a623; --minor:#9aa4b2; --pass:#54d18c; --rej:#6b7280;
+  --add:#1c3a2a; --del:#3a1f24;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+  --sans:"IBM Plex Sans",system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--ink);color:var(--fg);font-family:var(--sans);font-size:15px;
+  -webkit-font-smoothing:antialiased;display:grid;grid-template-columns:250px 1fr;
+  grid-template-rows:100vh}
+::selection{background:var(--accent-dim);color:#fff}
+a{color:var(--accent);text-decoration:none}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+
+/* ---------- sidebar ---------- */
+.side{background:var(--panel);border-right:1px solid var(--line);
+  padding:22px 16px;display:flex;flex-direction:column;gap:6px;overflow:auto}
+.brand{display:flex;align-items:center;gap:9px;font-family:var(--mono);
+  font-weight:600;font-size:17px;margin-bottom:18px;padding:0 8px}
+.brand .dot{width:9px;height:9px;border-radius:50%;background:var(--accent);
+  box-shadow:0 0 10px var(--accent)}
+.brand b{color:var(--accent)}
+.navlabel{font-family:var(--mono);font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--faint);margin:16px 8px 6px}
+.nav{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;
+  color:var(--muted);font-weight:500;font-size:14.5px;transition:.12s;text-align:left;width:100%}
+.nav:hover{background:var(--panel2);color:var(--fg)}
+.nav.active{background:var(--accent-ink);color:var(--accent)}
+.nav .ic{width:16px;text-align:center;font-family:var(--mono)}
+.side .foot{margin-top:auto;font-size:12px;color:var(--faint);padding:12px 8px 0;
+  border-top:1px solid var(--line);line-height:1.5}
+
+/* ---------- main ---------- */
+.main{overflow:auto;padding:0}
+.wrap{max-width:1080px;margin:0 auto;padding:34px 36px 80px}
+h1{font-size:24px;font-weight:700;letter-spacing:-.01em}
+h2{font-size:17px;font-weight:600;margin:0}
+.sub{color:var(--muted);margin-top:4px;font-size:14.5px;line-height:1.5}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--accent);margin-bottom:10px}
+.row{display:flex;gap:12px;flex-wrap:wrap}
+.spacer{height:26px}
+
+/* cards & tiles */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:20px 0}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 18px}
+.tile .n{font-size:30px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.tile .l{color:var(--muted);font-size:13px;margin-top:4px;line-height:1.3}
+.tile.accent .n{color:var(--accent)} .tile.pass .n{color:var(--pass)} .tile.crit .n{color:var(--crit)}
+
+/* tables */
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:11px 14px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+tbody tr:last-child td{border-bottom:none}
+th{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--muted);font-weight:500}
+td{font-variant-numeric:tabular-nums}
+tr.win td{background:var(--accent-ink)} tr.win .sys{color:var(--accent);font-weight:600}
+.f1{font-weight:700}
+
+/* case grid */
+.cases{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;margin-top:18px}
+.casecard{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  padding:16px 18px;text-align:left;transition:.14s;display:flex;flex-direction:column;gap:9px}
+.casecard:hover{border-color:var(--accent-dim);transform:translateY(-2px);background:var(--panel2)}
+.casecard .t{font-weight:600;font-size:15px;line-height:1.3}
+.casecard .id{font-family:var(--mono);font-size:11.5px;color:var(--faint)}
+.casecard .meta{display:flex;gap:7px;flex-wrap:wrap;margin-top:2px}
+
+/* chips */
+.chip{font-family:var(--mono);font-size:11px;font-weight:500;padding:3px 8px;border-radius:6px;
+  border:1px solid var(--line2);color:var(--muted);white-space:nowrap}
+.chip.tier{border-color:var(--accent-dim);color:var(--accent)}
+.chip.clean{border-color:var(--pass);color:var(--pass)}
+.chip.found{border-color:var(--pass);color:var(--pass)}
+.chip.miss{border-color:var(--crit);color:var(--crit)}
+.sev{font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.05em;
+  padding:3px 7px;border-radius:5px;color:#fff}
+.sev.critical{background:var(--crit)} .sev.major{background:var(--major);color:#1a1205}
+.sev.minor{background:var(--minor);color:#12151b}
+.verdict{font-family:var(--mono);font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px}
+.verdict.CONFIRMED{background:var(--accent-ink);color:var(--accent);border:1px solid var(--accent-dim)}
+.verdict.REJECTED{background:#242a2c;color:var(--rej);border:1px solid var(--line2)}
+.tp{font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:5px}
+.tp.real{background:#10261c;color:var(--pass);border:1px solid var(--accent-dim)}
+.tp.fp{background:#2a1b1f;color:var(--major);border:1px solid #5a3a22}
+
+/* back link + breadcrumb */
+.crumb{font-family:var(--mono);font-size:12.5px;color:var(--muted);margin-bottom:14px;display:flex;gap:8px;align-items:center}
+.crumb a{color:var(--muted)} .crumb a:hover{color:var(--accent)}
+
+/* finding cards */
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+@media(max-width:820px){.cols{grid-template-columns:1fr}.cases{grid-template-columns:1fr}}
+.col h3{font-size:13px;font-family:var(--mono);color:var(--muted);text-transform:uppercase;
+  letter-spacing:.06em;margin-bottom:10px;display:flex;justify-content:space-between}
+.finding{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  border-left:4px solid var(--line);margin-bottom:10px;overflow:hidden}
+.finding.critical{border-left-color:var(--crit)} .finding.major{border-left-color:var(--major)}
+.finding.minor{border-left-color:var(--minor)}
+.finding .head{padding:12px 14px;display:flex;gap:10px;align-items:flex-start;cursor:pointer}
+.finding .head:hover{background:var(--panel2)}
+.finding .ft{font-weight:600;font-size:14px;line-height:1.35;flex:1}
+.finding .loc{font-family:var(--mono);font-size:12px;color:var(--accent);margin-top:3px}
+.finding .body{padding:0 14px 14px;display:none;font-size:13.5px;line-height:1.5;color:var(--fg)}
+.finding.open .body{display:block}
+.finding .badges{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 8px}
+.ev{background:var(--panel3);border-radius:8px;padding:10px 12px;margin-top:10px;
+  font-size:12.5px;line-height:1.5;color:var(--muted);border-left:2px solid var(--accent-dim)}
+.ev b{color:var(--fg)}
+.tracebtn{margin-top:10px;font-family:var(--mono);font-size:12px;color:var(--accent);
+  border:1px solid var(--accent-dim);border-radius:7px;padding:6px 11px;display:inline-flex;gap:6px}
+.tracebtn:hover{background:var(--accent-ink)}
+.empty{color:var(--faint);font-style:italic;padding:14px;text-align:center;
+  border:1px dashed var(--line);border-radius:10px}
+
+/* diff */
+.diff{font-family:var(--mono);font-size:12.5px;line-height:1.55;background:var(--panel);
+  border:1px solid var(--line);border-radius:10px;overflow-x:auto;margin-top:8px}
+.diff .dl{padding:1px 14px;white-space:pre;display:block}
+.diff .add{background:var(--add);color:#a6e6bf} .diff .del{background:var(--del);color:#f0a9b2}
+.diff .hh{color:var(--accent);background:var(--panel2)} .diff .meta{color:var(--faint)}
+
+/* trace */
+.trace{margin-top:16px;display:flex;flex-direction:column;gap:0}
+.step{display:grid;grid-template-columns:120px 1fr;gap:14px;padding:12px 0;border-top:1px solid var(--line)}
+.step:first-child{border-top:none}
+.step .kind{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);padding-top:3px}
+.step.say .kind{color:var(--muted)} .step.tool .kind{color:var(--accent)}
+.step.out .kind{color:var(--faint)} .step.done .kind{color:var(--pass)}
+.step .content{font-size:13.5px;line-height:1.55}
+.step.say .content{color:var(--fg)}
+.cmd{font-family:var(--mono);font-size:12.5px;background:#0b0d11;border:1px solid var(--line);
+  border-radius:8px;padding:9px 12px;white-space:pre-wrap;color:#cbd3dd;overflow-x:auto}
+.cmd .tn{color:var(--accent)}
+.outbox{font-family:var(--mono);font-size:12px;background:var(--panel);border:1px solid var(--line);
+  border-radius:8px;padding:9px 12px;white-space:pre-wrap;color:var(--muted);max-height:220px;overflow:auto}
+.outbox .err{color:var(--crit)}
+.donebox{font-family:var(--mono);font-size:12.5px;color:var(--pass)}
+
+/* verify header panel */
+.vpanel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+.vgrid{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:22px;align-items:start;margin-top:16px}
+.vgrid>*{min-width:0}
+.cols>*{min-width:0}
+@media(max-width:900px){.vgrid{grid-template-columns:1fr}}
+.rejlist .rj{background:var(--panel);border:1px solid var(--line);border-radius:9px;
+  padding:11px 13px;margin-bottom:9px;font-size:13px}
+.rejlist .rj .loc{font-family:var(--mono);font-size:11.5px;color:var(--major)}
+.note{font-size:13px;color:var(--muted);line-height:1.55}
+.kbd{font-family:var(--mono);font-size:11px;background:var(--panel3);border:1px solid var(--line2);
+  border-radius:5px;padding:1px 6px;color:var(--muted)}
+.selectrow{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}
+.pick{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:9px 13px;
+  font-size:13px;text-align:left;transition:.12s}
+.pick:hover{border-color:var(--accent-dim)} .pick.on{border-color:var(--accent);background:var(--accent-ink);color:var(--accent)}
+.pick .loc{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.pick.on .loc{color:var(--accent)}
+</style>
+</head>
+<body>
+<aside class="side">
+  <div class="brand"><span class="dot"></span>Rev<b>Guard</b></div>
+  <div class="navlabel">Console</div>
+  <button class="nav" data-route="overview"><span class="ic">▤</span> Overview</button>
+  <button class="nav" data-route="cases"><span class="ic">◧</span> Cases &amp; findings</button>
+  <button class="nav" data-route="verify"><span class="ic">✓</span> Verification traces</button>
+  <div class="foot">
+    Every number and trace here is read from the committed
+    <span class="kbd">results/</span> and <span class="kbd">trajectories/</span>.
+    Rebuild with <span class="kbd">make console</span>.
+  </div>
+</aside>
+<main class="main"><div class="wrap" id="view"></div></main>
+
+<script>
+const DATA = /*__DATA__*/null;
+const $ = (h) => { const t=document.createElement('template'); t.innerHTML=h.trim(); return t.content.firstChild; };
+const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const view = document.getElementById('view');
+const SEV = {critical:0,major:1,minor:2};
+const bySev = (a,b)=>(SEV[a.severity]??3)-(SEV[b.severity]??3);
+
+/* ---------- routing ---------- */
+function route(){
+  const h=(location.hash||'#/overview').slice(2).split('/');
+  document.querySelectorAll('.nav').forEach(n=>n.classList.toggle('active',n.dataset.route===h[0]));
+  view.scrollTop=0; main.scrollTop=0;
+  if(h[0]==='overview') renderOverview();
+  else if(h[0]==='cases') h[1]?renderCase(h[1]):renderCases();
+  else if(h[0]==='verify') renderVerify(h[1], h[2]);
+  else renderOverview();
+}
+const main=document.querySelector('.main');
+document.querySelectorAll('.nav').forEach(n=>n.onclick=()=>location.hash='#/'+n.dataset.route);
+addEventListener('hashchange',route);
+
+/* ---------- overview ---------- */
+function renderOverview(){
+  const rows=DATA.comparison;
+  const v5=rows.find(r=>r.system==='agent-v5')||{}, base=rows.find(r=>r.system==='baseline')||{};
+  const t3v=DATA.tier3['agent-v5']||{}, t3b=DATA.tier3['baseline']||{};
+  view.innerHTML='';
+  view.append($(`<div>
+    <div class="eyebrow">the scoreboard</div>
+    <h1>RevGuard — evidence-linked code review</h1>
+    <div class="sub">A pipeline of specialist reviewers whose every finding must survive an adversarial verifier that tries to disprove it by running the code. Scored on 22 pull requests with 61 planted, labeled bugs — the same cases and one fixed rule for every system.</div>
+  </div>`));
+
+  // headline: the tier-3 win (where review is actually hard)
+  view.append($(`<div><div class="spacer"></div>
+    <h2>Where review is hard — the six large, multi-file PRs (tier 3)</h2>
+    <div class="sub" style="margin-bottom:14px">On small PRs the base model is already perfect, so we don't claim credit there. The pipeline earns its keep on the realistic ones:</div>
+    <div class="tiles">
+      <div class="tile accent"><div class="n">${t3v.f1??'–'}</div><div class="l">RevGuard v5 — tier-3 F1</div></div>
+      <div class="tile"><div class="n">${t3b.f1??'–'}</div><div class="l">baseline — tier-3 F1</div></div>
+      <div class="tile pass"><div class="n">${t3v.fp??'–'}</div><div class="l">v5 false positives (vs ${t3b.fp??'–'} baseline)</div></div>
+      <div class="tile"><div class="n">$${v5.avg_cost??'–'}</div><div class="l">avg cost / review · ${v5.avg_s??'–'}s · vs ~1hr human</div></div>
+    </div></div>`));
+
+  view.append($(`<div><div class="spacer"></div>
+    <h2>Every system, same 22 cases, same rule</h2>
+    <div class="sub" style="margin-bottom:12px">The changelog in code form. Overall F1 favors the baseline only because the small-PR tier is saturated (39/39) — the honest headline is the tier-3 table above. Adding agent machinery made things worse until we measured why.</div></div>`));
+  const tbl=$(`<div class="tablewrap"><table><thead><tr>
+    <th>system</th><th>found</th><th>recall</th><th>precision</th><th>F1</th><th>false pos</th><th>clean-PR FP</th><th>avg s</th><th>avg $</th>
+    </tr></thead><tbody></tbody></table></div>`);
+  const tb=tbl.querySelector('tbody');
+  rows.forEach(r=>{
+    const win=r.system==='agent-v5';
+    tb.append($(`<tr class="${win?'win':''}">
+      <td class="sys">${esc(label(r.system))}</td><td>${r.found}</td><td>${r.recall}</td>
+      <td>${r.precision}</td><td class="f1">${r.f1}</td><td>${r.fp}</td><td>${r.clean_fp}</td>
+      <td>${r.avg_s}</td><td>$${r.avg_cost}</td></tr>`));
+  });
+  view.append(tbl);
+  view.append($(`<div><div class="spacer"></div><div class="note">
+    v1 (tools + a cautious prompt) was <span style="color:var(--crit)">worse</span> than the baseline;
+    the verifier once confirmed 54/54 findings — a rubber stamp, because verification checks <i>truth</i>
+    and most bad review comments are true. v5 pairs recall-tuned reviewers with a <b style="color:var(--fg)">policy-gated verifier</b>.
+    Open <b style="color:var(--fg)">Verification traces</b> to watch it reproduce a real crash before confirming it.
+  </div></div>`));
+}
+const label=(s)=>({baseline:'baseline · 1 prompt','agent-v1':'v1 · tooled generalist',
+  'agent-v2':'v2 · specialists','agent-v3':'v3 · + verifier','agent-v4':'v4 · + nitpick (removed)',
+  'agent-v5':'v5 · recall-tuned + policy gate'}[s]||s);
+
+/* ---------- cases list ---------- */
+function renderCases(){
+  view.innerHTML='';
+  view.append($(`<div><div class="eyebrow">22 pull requests · 61 planted bugs</div>
+    <h1>Cases &amp; findings</h1>
+    <div class="sub">Each is a real pull request whose test suite <b>passes</b> — the bugs are hidden from CI. Click one to see the diff, what each system found, and the ground truth.</div></div>`));
+  const grid=$(`<div class="cases"></div>`);
+  DATA.cases.forEach(c=>{
+    const d=DATA.detail[c.id], v5=d.systems['agent-v5'];
+    const foundTxt = c.clean ? 'clean PR' : `${v5?v5.found:0}/${c.gt} bugs found`;
+    const cls = c.clean ? 'clean' : (v5 && v5.found===c.gt ? 'found':'miss');
+    grid.append($(`<button class="casecard" onclick="location.hash='#/cases/${c.id}'">
+      <div class="id">${esc(c.id)}</div>
+      <div class="t">${esc(c.title)}</div>
+      <div class="meta">
+        <span class="chip tier">tier ${c.tier}</span>
+        ${c.clean?'<span class="chip clean">clean</span>':''}
+        <span class="chip ${cls}">${foundTxt}</span>
+      </div></button>`));
+  });
+  view.append(grid);
+}
+
+/* ---------- case detail ---------- */
+function renderCase(id){
+  const d=DATA.detail[id]; if(!d){location.hash='#/cases';return;}
+  view.innerHTML='';
+  view.append($(`<div class="crumb"><a href="#/cases">Cases</a> ／ <span>${esc(id)}</span></div>`));
+  view.append($(`<div><h1>${esc(d.meta.title)}</h1>
+    <div class="sub">${esc(d.meta.pr_description)}</div>
+    <div class="meta row" style="margin-top:12px">
+      <span class="chip tier">tier ${d.meta.tier}</span>
+      ${d.meta.clean?'<span class="chip clean">clean PR — no planted bugs</span>':`<span class="chip">${d.meta.defects.length} planted bug(s)</span>`}
+    </div></div>`));
+
+  // findings: baseline vs v5
+  const cols=$(`<div class="cols"></div>`);
+  DATA.detail_systems.forEach(sys=>{
+    const s=d.systems[sys];
+    const col=$(`<div class="col"><h3><span>${esc(label(sys))}</span>
+      <span>${s?`${s.findings.length} shown · $${(s.cost_usd||0).toFixed(2)}`:'—'}</span></h3></div>`);
+    if(!s || !s.findings.length){ col.append($(`<div class="empty">No findings reported.</div>`)); }
+    else s.findings.slice().sort(bySev).forEach((f,i)=>col.append(findingCard(f,sys,id,i)));
+    cols.append(col);
+  });
+  view.append(cols);
+
+  // ground truth
+  if(d.meta.defects.length){
+    view.append($(`<div><div class="spacer"></div><h2>Ground truth — the planted bugs</h2>
+      <div class="sub" style="margin-bottom:10px">What we hid in this PR, and whether v5 caught each.</div></div>`));
+    const v5=d.systems['agent-v5'];
+    const missed=new Set(v5?v5.missed:[]);
+    const gtbox=$(`<div></div>`);
+    d.meta.defects.forEach(g=>{
+      const caught=!missed.has(g.id);
+      gtbox.append($(`<div class="finding ${g.severity}"><div class="head">
+        <span class="sev ${g.severity}">${g.severity}</span>
+        <div class="ft">${esc(g.description)}
+          <div class="loc">${esc(g.file)}:${g.line} · ${esc(g.category)}</div></div>
+        <span class="chip ${caught?'found':'miss'}">${caught?'✓ caught':'✗ missed'}</span>
+      </div></div>`));
+    });
+    view.append(gtbox);
+  }
+
+  // diff
+  view.append($(`<div><div class="spacer"></div><h2>The pull request (diff)</h2></div>`));
+  view.append(renderDiff(d.diff));
+}
+
+function findingCard(f,sys,cid,idx){
+  const v=f.verification||{};
+  const card=$(`<div class="finding ${f.severity}">
+    <div class="head">
+      <span class="sev ${f.severity}">${f.severity}</span>
+      <div class="ft">${esc(f.title)}<div class="loc">${esc(f.file)}:${f.line} · ${esc(f.category)}</div></div>
+    </div>
+    <div class="body">
+      <div class="badges">
+        ${f.reviewer?`<span class="chip">raised by ${esc(f.reviewer)}</span>`:''}
+        ${v.verdict?`<span class="verdict ${v.verdict}">${v.verdict}</span>`:''}
+        ${'_true' in f?`<span class="tp ${f._true?'real':'fp'}">${f._true?'matches a planted bug':'not a planted bug'}</span>`:''}
+      </div>
+      <div>${esc(f.description)}</div>
+      ${v.evidence?`<div class="ev"><b>Verifier evidence (${esc(v.confidence||'')}):</b> ${esc(v.evidence)}</div>`:''}
+    </div>
+  </div>`);
+  card.querySelector('.head').onclick=()=>card.classList.toggle('open');
+  if(sys==='agent-v5' && f._trace && f._trace.length){
+    const btn=$(`<button class="tracebtn">▶ watch the verifier attack this finding</button>`);
+    btn.onclick=(e)=>{e.stopPropagation();location.hash=`#/verify/${cid}/${idx}`;};
+    card.querySelector('.body').append(btn);
+  }
+  return card;
+}
+
+/* ---------- diff ---------- */
+function renderDiff(diff){
+  const box=$(`<div class="diff"></div>`);
+  (diff||'').split('\n').forEach(l=>{
+    let cls='';
+    if(l.startsWith('+++')||l.startsWith('---'))cls='meta';
+    else if(l.startsWith('@@'))cls='hh';
+    else if(l.startsWith('+'))cls='add';
+    else if(l.startsWith('-'))cls='del';
+    else if(l.startsWith('diff ')||l.startsWith('index '))cls='meta';
+    box.append($(`<span class="dl ${cls}">${esc(l)||' '}</span>`));
+  });
+  return box;
+}
+
+/* ---------- verification traces (the differentiator) ---------- */
+function renderVerify(cid, idx){
+  // default to the reopen-crash case (the money-shot reproduction), else first with traces
+  const hasTrace=(id)=>{const s=DATA.detail[id]&&DATA.detail[id].systems['agent-v5'];return s&&s.findings.some(f=>f._trace&&f._trace.length);};
+  if(!cid){ cid = (hasTrace('case21_perf_reports') && 'case21_perf_reports')
+                 || DATA.cases.find(c=>hasTrace(c.id))?.id; }
+  const d=cid?DATA.detail[cid]:null;
+  view.innerHTML='';
+  view.append($(`<div><div class="eyebrow">the part no other review tool shows</div>
+    <h1>Verification traces</h1>
+    <div class="sub">A reviewer <i>claiming</i> a bug is cheap. Here's the second agent that had to <b>prove each finding wrong</b> — in a fresh sandbox, with a shell — before it reached a human. Pick a case, then a finding, and watch it work.</div></div>`));
+
+  // case picker
+  const withTraces=DATA.cases.filter(c=>{const s=DATA.detail[c.id].systems['agent-v5'];return s&&s.findings.some(f=>f._trace&&f._trace.length);});
+  const cpick=$(`<div class="selectrow"></div>`);
+  withTraces.forEach(c=>{
+    const on=c.id===cid;
+    cpick.append($(`<button class="pick ${on?'on':''}" onclick="location.hash='#/verify/${c.id}'">
+      ${esc(c.title)}<div class="loc">${esc(c.id)} · tier ${c.tier}</div></button>`));
+  });
+  view.append(cpick);
+  if(!d) return;
+
+  const v5=d.systems['agent-v5'];
+  const traced=v5.findings.map((f,i)=>({f,i})).filter(x=>x.f._trace&&x.f._trace.length);
+  let sel = idx!=null? +idx : (traced[0]?traced[0].i:null);
+
+  const grid=$(`<div class="vgrid"></div>`);
+  const leftWrap=$(`<div></div>`);
+  const right=$(`<div class="rejlist"></div>`);
+  grid.append(leftWrap,right);
+  view.append(grid);
+
+  // right: rejected findings (the noise thrown out)
+  right.append($(`<div><h2 style="font-size:14px">What the verifier threw out</h2>
+    <div class="note" style="margin:6px 0 12px">Findings a reviewer raised but the verifier could not confirm — the noise that never reaches you.</div></div>`));
+  if(!v5.rejected || !v5.rejected.length){
+    right.append($(`<div class="empty">Nothing rejected on this case — every raised finding survived.</div>`));
+  } else v5.rejected.forEach(r=>{
+    const rv=r.verification||{};
+    right.append($(`<div class="rj"><div class="loc">${esc(r.file)}:${r.line}</div>
+      <div style="margin:3px 0 5px;font-weight:600">${esc(r.title)}</div>
+      <span class="verdict REJECTED">REJECTED</span>
+      ${rv.evidence?`<div class="note" style="margin-top:7px">${esc(rv.evidence)}</div>`:''}</div>`));
+  });
+
+  // left: finding picker + the trace
+  const fpick=$(`<div class="selectrow"></div>`);
+  traced.forEach(({f,i})=>{
+    fpick.append($(`<button class="pick ${i===sel?'on':''}" onclick="location.hash='#/verify/${cid}/${i}'">
+      <span class="sev ${f.severity}" style="margin-right:6px">${f.severity}</span>${esc(f.title)}
+      <div class="loc">${esc(f.file)}:${f.line}</div></button>`));
+  });
+  leftWrap.append(fpick);
+  if(sel==null){ leftWrap.append($(`<div class="empty">Select a finding.</div>`)); return; }
+
+  const f=v5.findings[sel], v=f.verification||{};
+  leftWrap.append($(`<div class="vpanel">
+    <div class="badges" style="margin-bottom:8px">
+      ${f.reviewer?`<span class="chip">raised by ${esc(f.reviewer)} reviewer</span>`:''}
+      <span class="verdict ${v.verdict||''}">${v.verdict||'—'}</span>
+      ${'_true' in f?`<span class="tp ${f._true?'real':'fp'}">${f._true?'matches a planted bug':'not a planted bug'}</span>`:''}
+    </div>
+    <div style="font-weight:600;font-size:15px">${esc(f.title)}</div>
+    <div class="loc" style="font-family:var(--mono);color:var(--accent);font-size:12.5px;margin:4px 0 2px">${esc(f.file)}:${f.line}</div>
+    <div class="note" style="margin-top:8px">${esc(f.description)}</div>
+  </div>`));
+  leftWrap.append($(`<div><div class="spacer" style="height:14px"></div>
+    <div class="eyebrow" style="margin-bottom:2px">the verifier's attempt to disprove it</div></div>`));
+  leftWrap.append(renderTrace(f._trace));
+}
+
+function renderTrace(steps){
+  const box=$(`<div class="trace"></div>`);
+  steps.forEach(s=>{
+    if(s.k==='say') box.append($(`<div class="step say"><div class="kind">reason</div><div class="content">${esc(s.text)}</div></div>`));
+    else if(s.k==='tool') box.append($(`<div class="step tool"><div class="kind">run · ${esc(s.name)}</div><div class="content"><div class="cmd"><span class="tn">$</span> ${esc(s.arg)}</div></div></div>`));
+    else if(s.k==='out'){ const err=/error|traceback|exception|already exists/i.test(s.text);
+      box.append($(`<div class="step out"><div class="kind">output</div><div class="content"><div class="outbox ${err?'':''}">${err?highlightErr(s.text):esc(s.text)}</div></div></div>`)); }
+    else if(s.k==='done') box.append($(`<div class="step done"><div class="kind">verdict</div><div class="content donebox">✓ returned after ${s.turns} turns · ${s.secs}s · $${(s.cost||0).toFixed(3)}</div></div>`));
+  });
+  return box;
+}
+function highlightErr(t){
+  return esc(t).replace(/([A-Za-z.]*(Error|Exception)[^\n]*)/g,'<span class="err">$1</span>');
+}
+
+route();
+</script>
+</body>
+</html>
