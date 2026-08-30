@@ -41,6 +41,9 @@ make agent               # ~45-60 min, ~$11 total
 
 # 4. Score everything present under results/ with the fixed matching rule.
 make eval
+
+# 5. (optional) Build the interactive console from those results + trajectories.
+make console            # writes docs/console.html — open it in any browser
 ```
 
 `make eval` prints the comparison table (recall / precision / F1 / false
@@ -48,6 +51,13 @@ positives / time / cost per system). Expected output: the table in the
 README's Results section, within a small margin — LLM runs are not bit-for-bit
 deterministic, so counts can shift by a finding or two; the ordering of the
 systems should hold.
+
+`make console` regenerates `docs/console.html`, a self-contained interactive
+UI (no server — open it directly) with three views: the scoreboard, a
+per-case inspector (diff, findings, ground truth), and the verification-trace
+explorer where you can watch the adversarial verifier reproduce a bug before
+confirming it. It reads only the committed `results/` and `trajectories/`, so
+it needs no API calls.
 
 To reproduce the intermediate changelog iterations:
 

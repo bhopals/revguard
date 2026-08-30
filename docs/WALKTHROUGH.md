@@ -248,6 +248,9 @@ Three findings, in order of importance (full tables in the
 
 ## 7. Where to go next
 
+- **Explore it interactively:** open `docs/console.html` (build/refresh with
+  `make console`) — the scoreboard, a per-case inspector, and the
+  verification-trace explorer, all reading the committed results.
 - **Reproduce every number from scratch:** [REPRODUCTION.md](REPRODUCTION.md).
 - **Read the honest iteration story:** [CHANGELOG.md](CHANGELOG.md).
 - **See it on real bugs:** [../replay/README.md](../replay/README.md).
